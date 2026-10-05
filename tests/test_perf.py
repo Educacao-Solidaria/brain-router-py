@@ -55,9 +55,10 @@ async def test_async_function_measures_awaited_time(output: io.StringIO) -> None
 
     assert await nap(0.02) == "ok"
 
-    assert get_stats("unit.sleep").last_seconds >= 0.02
+    # margem de 1 ms: o loop pode acordar até a resolução do relógio antes do prazo
+    assert get_stats("unit.sleep").last_seconds >= 0.019
     (line,) = timed_lines(output)
-    assert line["elapsed_ms"] >= 20
+    assert line["elapsed_ms"] >= 19
 
 
 def test_errors_are_counted_and_reraised_without_message(output: io.StringIO) -> None:
