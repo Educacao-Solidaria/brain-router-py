@@ -47,14 +47,24 @@ Requisitos: [uv](https://docs.astral.sh/uv/) (Python 3.12 é instalado por ele, 
 
 ```bash
 uv sync --extra dev              # cria .venv e instala dependências do uv.lock
-uv run ruff check .              # lint
-uv run ruff format --check .     # formatação
-uv run pytest                    # testes
-uv run python -m app --version   # sanity check do pacote
+uv run pre-commit install        # liga os hooks no git commit (uma vez por clone)
+scripts/check.sh                 # mesma sequência do CI, na mesma ordem
 ```
 
-O CI (`.github/workflows/ci.yml`) roda exatamente esses passos em cada PR, com
-`uv sync --locked`: se o `pyproject.toml` mudar sem `uv lock`, o build falha.
+`scripts/check.sh` roda, em ordem: `uv sync --locked`, `ruff check`,
+`ruff format --check`, `mypy` (modo strict) e `pytest` (cobertura mínima de
+90%). O CI (`.github/workflows/ci.yml`) roda exatamente os mesmos comandos — um
+teste (`tests/test_tooling.py`) falha se os dois divergirem.
+
+| Comando | O que faz |
+|---|---|
+| `uv run brain-router --version` | CLI do pacote (entry point `app.__main__:main`) |
+| `uv run pre-commit run --all-files` | todos os hooks sobre o repositório inteiro |
+| `uv add <pacote>` / `uv add --optional dev <pacote>` | nova dependência, já atualizando o `uv.lock` |
+
+Os hooks de pre-commit usam o ambiente do projeto (`uv run`), então ruff e mypy
+rodam nas versões travadas no `uv.lock` — as mesmas do CI. Se o
+`pyproject.toml` mudar sem `uv lock`, o hook `uv-lock` e o CI barram.
 
 ## Regras de Engenharia
 

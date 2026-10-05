@@ -12,8 +12,15 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "pytest-cov>=5.0.0",
     "ruff>=0.4.0",
+    "mypy>=1.10.0",
+    "pre-commit>=3.7.0",
+    "types-PyYAML>=6.0",
 ]
+
+[project.scripts]
+brain-router = "app.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -30,6 +37,21 @@ target-version = "py312"
 # E/W: pycodestyle · F: pyflakes · I: isort · B: bugbear · UP: pyupgrade · SIM: simplify
 select = ["E", "W", "F", "I", "B", "UP", "SIM"]
 
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["app", "tests"]
+plugins = ["pydantic.mypy"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra --strict-markers"
+addopts = "-ra --strict-markers --cov=app --cov-report=term-missing"
+
+[tool.coverage.run]
+branch = true
+
+[tool.coverage.report]
+fail_under = 90
+skip_covered = true
+exclude_also = ['if __name__ == "__main__":']
