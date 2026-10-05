@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint, format e testes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Instalar dependências (lock congelado)
+        run: uv sync --locked --extra dev
+
+      - name: Ruff (lint)
+        run: uv run ruff check --output-format=github .
+
+      - name: Ruff (format)
+        run: uv run ruff format --check .
+
+      - name: Pytest
+        run: uv run pytest

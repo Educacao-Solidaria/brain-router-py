@@ -41,6 +41,21 @@ O desenvolvimento é guiado pelo roadmap de **100 PRs** no [Plane da in100tiva (
 - **Fase 4:** Observabilidade OTel, Evals e Benchmarks (PRs 76-90)
 - **Fase 5:** Release v1.0, Docker e Documentação (PRs 91-100+)
 
+## Desenvolvimento
+
+Requisitos: [uv](https://docs.astral.sh/uv/) (Python 3.12 é instalado por ele, se faltar).
+
+```bash
+uv sync --extra dev              # cria .venv e instala dependências do uv.lock
+uv run ruff check .              # lint
+uv run ruff format --check .     # formatação
+uv run pytest                    # testes
+uv run python -m app --version   # sanity check do pacote
+```
+
+O CI (`.github/workflows/ci.yml`) roda exatamente esses passos em cada PR, com
+`uv sync --locked`: se o `pyproject.toml` mudar sem `uv lock`, o build falha.
+
 ## Regras de Engenharia
 
 - **Tamanho dos PRs:** Mínimo 100 linhas, máximo 500 linhas de código.
