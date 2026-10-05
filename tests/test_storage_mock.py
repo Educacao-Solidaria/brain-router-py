@@ -1,4 +1,5 @@
 import pytest
+
 from app.errors.exceptions import CollectionNotFoundError
 from app.schemas.domain import Chunk
 from app.storage.interfaces import InMemoryVectorStore

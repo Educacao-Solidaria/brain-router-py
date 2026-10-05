@@ -1,6 +1,5 @@
-from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
 import math
+from abc import ABC, abstractmethod
 
 from app.errors.exceptions import CollectionNotFoundError
 from app.schemas.domain import Chunk, SearchResult
@@ -10,7 +9,7 @@ class BaseVectorStore(ABC):
     """Interface abstrata base para provedores de Vector Store."""
 
     @abstractmethod
-    async def add_chunks(self, collection_name: str, chunks: List[Chunk]) -> int:
+    async def add_chunks(self, collection_name: str, chunks: list[Chunk]) -> int:
         """Armazena uma lista de chunks associados a uma colecao."""
         pass
 
@@ -18,10 +17,10 @@ class BaseVectorStore(ABC):
     async def search_vector(
         self,
         collection_name: str,
-        query_vector: List[float],
+        query_vector: list[float],
         limit: int = 10,
         min_score: float = 0.0,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Realiza busca por similaridade vetorial."""
         pass
 
@@ -45,15 +44,15 @@ class BaseTextSearch(ABC):
         collection_name: str,
         query: str,
         limit: int = 10,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Executa busca textual full-text/lexical por palavras-chave."""
         pass
 
 
-def _cosine_similarity(v1: List[float], v2: List[float]) -> float:
+def _cosine_similarity(v1: list[float], v2: list[float]) -> float:
     if len(v1) != len(v2) or not v1:
         return 0.0
-    dot = sum(a * b for a, b in zip(v1, v2))
+    dot = sum(a * b for a, b in zip(v1, v2, strict=True))
     norm_a = math.sqrt(sum(a * a for a in v1))
     norm_b = math.sqrt(sum(b * b for b in v2))
     if norm_a == 0.0 or norm_b == 0.0:
@@ -65,9 +64,9 @@ class InMemoryVectorStore(BaseVectorStore, BaseTextSearch):
     """Implementacao em memoria para desenvolvimento local e testes isolados."""
 
     def __init__(self) -> None:
-        self._collections: Dict[str, List[Chunk]] = {}
+        self._collections: dict[str, list[Chunk]] = {}
 
-    async def add_chunks(self, collection_name: str, chunks: List[Chunk]) -> int:
+    async def add_chunks(self, collection_name: str, chunks: list[Chunk]) -> int:
         if collection_name not in self._collections:
             self._collections[collection_name] = []
         self._collections[collection_name].extend(chunks)
@@ -76,14 +75,14 @@ class InMemoryVectorStore(BaseVectorStore, BaseTextSearch):
     async def search_vector(
         self,
         collection_name: str,
-        query_vector: List[float],
+        query_vector: list[float],
         limit: int = 10,
         min_score: float = 0.0,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         if collection_name not in self._collections:
             raise CollectionNotFoundError(collection_name)
 
-        scored: List[tuple[Chunk, float]] = []
+        scored: list[tuple[Chunk, float]] = []
         for chunk in self._collections[collection_name]:
             if not chunk.embedding:
                 continue
@@ -92,7 +91,7 @@ class InMemoryVectorStore(BaseVectorStore, BaseTextSearch):
                 scored.append((chunk, sim))
 
         scored.sort(key=lambda x: x[1], reverse=True)
-        results: List[SearchResult] = []
+        results: list[SearchResult] = []
         for rank, (chunk, score) in enumerate(scored[:limit], start=1):
             results.append(
                 SearchResult(
@@ -110,12 +109,12 @@ class InMemoryVectorStore(BaseVectorStore, BaseTextSearch):
         collection_name: str,
         query: str,
         limit: int = 10,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         if collection_name not in self._collections:
             raise CollectionNotFoundError(collection_name)
 
         terms = [t.lower() for t in query.split() if t]
-        scored: List[tuple[Chunk, float]] = []
+        scored: list[tuple[Chunk, float]] = []
 
         for chunk in self._collections[collection_name]:
             text_lower = chunk.content.lower()
@@ -125,7 +124,7 @@ class InMemoryVectorStore(BaseVectorStore, BaseTextSearch):
                 scored.append((chunk, score))
 
         scored.sort(key=lambda x: x[1], reverse=True)
-        results: List[SearchResult] = []
+        results: list[SearchResult] = []
         for rank, (chunk, score) in enumerate(scored[:limit], start=1):
             results.append(
                 SearchResult(
