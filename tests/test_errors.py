@@ -1,10 +1,9 @@
-import pytest
 from app.errors.exceptions import (
     BrainRouterError,
-    DocumentNotFoundError,
     CollectionNotFoundError,
-    EmbeddingServiceError,
     DatabaseQueryError,
+    DocumentNotFoundError,
+    EmbeddingServiceError,
     RerankServiceError,
 )
 
