@@ -61,6 +61,8 @@ teste (`tests/test_tooling.py`) falha se os dois divergirem.
 | `uv run brain-router --version` | CLI do pacote (entry point `app.__main__:main`) |
 | `uv run pre-commit run --all-files` | todos os hooks sobre o repositório inteiro |
 | `uv add <pacote>` / `uv add --optional dev <pacote>` | nova dependência, já atualizando o `uv.lock` |
+| `uv run alembic upgrade head` | aplica as migrações (lê `DATABASE_URL`; nada de URL no `alembic.ini`) |
+| `uv run alembic upgrade head --sql` | só imprime o SQL das migrações, sem conectar nem pedir credencial |
 
 Os hooks de pre-commit usam o ambiente do projeto (`uv run`), então ruff e mypy
 rodam nas versões travadas no `uv.lock` — as mesmas do CI. Se o
