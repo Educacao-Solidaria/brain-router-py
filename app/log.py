@@ -16,6 +16,7 @@ from logging.handlers import QueueHandler, QueueListener
 from typing import IO, Any
 
 import structlog
+import structlog.tracebacks
 from structlog.typing import EventDict, Processor, WrappedLogger
 
 REDACTED = "**********"
@@ -60,7 +61,17 @@ def configure_logging(
     renderer: Processor = (
         structlog.processors.JSONRenderer() if json else structlog.dev.ConsoleRenderer()
     )
-    exceptions: list[Processor] = [structlog.processors.dict_tracebacks] if json else []
+    # `dict_tracebacks` usa show_locals=True: as variáveis locais de cada frame (DSN com
+    # senha, tokens) iriam para o log. Os locals não passam pelo redact_secrets.
+    exceptions: list[Processor] = (
+        [
+            structlog.processors.ExceptionRenderer(
+                structlog.tracebacks.ExceptionDictTransformer(show_locals=False)
+            )
+        ]
+        if json
+        else []
+    )
 
     structlog.configure(
         processors=[
