@@ -38,7 +38,9 @@ class ChunkFactory:
 
     document_id: str = "doc-1"
     dim: int = 8
-    _sequence: Iterator[int] = field(default_factory=lambda: itertools.count(1))
+    _sequence: Iterator[int] = field(
+        default_factory=lambda: itertools.count(1), init=False, repr=False
+    )
 
     def __call__(
         self, content: str | None = None, *, embed: bool = False, **overrides: Any
