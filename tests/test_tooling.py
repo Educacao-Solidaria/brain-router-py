@@ -42,3 +42,20 @@ def test_pre_commit_covers_lint_format_and_types() -> None:
 def test_mypy_runs_in_strict_mode() -> None:
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert config["tool"]["mypy"]["strict"] is True
+
+
+def test_integration_job_migrates_a_pgvector_service_before_marked_tests() -> None:
+    job = _load_yaml(".github/workflows/ci.yml")["jobs"]["integration"]
+    service = job["services"]["postgres"]
+    runs = [step["run"] for step in job["steps"] if "run" in step]
+
+    assert service["image"].startswith("pgvector/pgvector:")
+    assert "--health-cmd" in service["options"]
+    assert runs.index("uv run alembic upgrade head") < runs.index("uv run pytest -m integration")
+
+
+def test_default_pytest_run_excludes_integration_tests() -> None:
+    config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    pytest_options = config["tool"]["pytest"]["ini_options"]
+    assert pytest_options["addopts"][:2] == ["-m", "not integration"]
+    assert any(marker.startswith("integration:") for marker in pytest_options["markers"])

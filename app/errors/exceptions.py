@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class BrainRouterError(Exception):
@@ -9,7 +9,7 @@ class BrainRouterError(Exception):
         message: str,
         code: str = "INTERNAL_ERROR",
         http_status: int = 500,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
@@ -17,7 +17,7 @@ class BrainRouterError(Exception):
         self.http_status = http_status
         self.details = details or {}
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "error": {
                 "code": self.code,

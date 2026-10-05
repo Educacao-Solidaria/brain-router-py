@@ -1,0 +1,19 @@
+# Postgres com pgvector para os testes de integração, igual ao service do CI.
+#   docker compose up -d --wait db
+#   DATABASE_URL=postgresql://brain:brain-local@localhost:5432/brain_router_test \
+#   OPENROUTER_API_KEY=sk-or-v1-local uv run pytest -m integration
+# Credenciais descartáveis, só para este container local; a porta escuta só em 127.0.0.1.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: brain
+      POSTGRES_PASSWORD: brain-local
+      POSTGRES_DB: brain_router_test
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brain -d brain_router_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

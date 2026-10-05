@@ -39,3 +39,42 @@ jobs:
 
       - name: Pytest
         run: uv run pytest
+
+  integration:
+    name: integração (postgres + pgvector)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: brain
+          # Container descartável do job; não é segredo de ambiente nenhum.
+          POSTGRES_PASSWORD: brain-ci
+          POSTGRES_DB: brain_router_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U brain -d brain_router_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://brain:brain-ci@localhost:5432/brain_router_test
+      OPENROUTER_API_KEY: sk-or-v1-ci-placeholder
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Instalar dependências (lock congelado)
+        run: uv sync --locked --extra dev
+
+      - name: Migrações (alembic upgrade head)
+        run: uv run alembic upgrade head
+
+      - name: Pytest (integração)
+        run: uv run pytest -m integration
