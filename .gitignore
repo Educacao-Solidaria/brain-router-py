@@ -7,3 +7,6 @@ __pycache__/
 .mypy_cache/
 *.db
 *.sqlite3
+.coverage
+.coverage.*
+coverage.xml
