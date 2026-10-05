@@ -5,8 +5,10 @@ description = "Hybrid RAG knowledge router & evaluation engine"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "asyncpg>=0.29.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.4.0",
+    "sqlmodel>=0.0.22",
     "structlog>=24.1.0",
 ]
 
@@ -46,6 +48,11 @@ strict = true
 warn_unreachable = true
 files = ["app", "tests"]
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# asyncpg não publica tipos; só usamos as classes de exceção.
+module = ["asyncpg", "asyncpg.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
