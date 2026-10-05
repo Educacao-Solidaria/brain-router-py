@@ -1,4 +1,5 @@
 import pytest
+
 from app.clients.interfaces import MockEmbeddingClient, MockRerankerClient
 from app.errors.exceptions import EmbeddingServiceError, RerankServiceError
 from app.schemas.domain import Chunk
@@ -36,7 +37,11 @@ async def test_mock_reranker_client() -> None:
     chunks = [
         Chunk(id="c1", document_id="d1", content="Inteligencia artificial e redes neurais"),
         Chunk(id="c2", document_id="d1", content="Receita de bolo de chocolate caseiro"),
-        Chunk(id="c3", document_id="d2", content="Redes neurais profundas e aprendizado supervisionado"),
+        Chunk(
+            id="c3",
+            document_id="d2",
+            content="Redes neurais profundas e aprendizado supervisionado",
+        ),
     ]
 
     results = await reranker.rerank("redes neurais", chunks, top_n=2)

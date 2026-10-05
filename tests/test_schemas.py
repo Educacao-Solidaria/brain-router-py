@@ -1,17 +1,14 @@
 import pytest
 from pydantic import ValidationError
 
-from app.schemas.domain import Chunk, Document, SearchResult
+from app.schemas.domain import Chunk, SearchResult
 from app.schemas.mcp import (
     EvalMetric,
-    EvalRunInput,
-    EvalRunOutput,
     HybridSearchInput,
-    IndexDocumentInput,
 )
 
 
-def test_chunk_creation_valid():
+def test_chunk_creation_valid() -> None:
     chunk = Chunk(
         id="chk_01",
         document_id="doc_01",
@@ -21,16 +18,16 @@ def test_chunk_creation_valid():
         metadata={"section": "introducao"},
     )
     assert chunk.id == "chk_01"
-    assert len(chunk.embedding) == 3
+    assert chunk.embedding is not None and len(chunk.embedding) == 3
     assert chunk.token_count == 8
 
 
-def test_chunk_empty_content_raises():
+def test_chunk_empty_content_raises() -> None:
     with pytest.raises(ValidationError):
         Chunk(id="chk_02", document_id="doc_01", content="")
 
 
-def test_hybrid_search_input_validation():
+def test_hybrid_search_input_validation() -> None:
     # Validação dos limites de alpha (0.0 a 1.0)
     valid_input = HybridSearchInput(query="o que e o trynux?", alpha=0.7, top_k=10)
     assert valid_input.top_k == 10
@@ -40,7 +37,7 @@ def test_hybrid_search_input_validation():
         HybridSearchInput(query="teste", alpha=1.5)  # Alpha acima de 1.0
 
 
-def test_eval_metric_score_bounds():
+def test_eval_metric_score_bounds() -> None:
     metric = EvalMetric(
         name="faithfulness",
         score=0.95,
@@ -54,7 +51,7 @@ def test_eval_metric_score_bounds():
         EvalMetric(name="relevance", score=1.2, passed=True)  # Score > 1.0
 
 
-def test_search_result_rrf():
+def test_search_result_rrf() -> None:
     chunk = Chunk(id="chk_03", document_id="doc_02", content="Conteudo recuperado.")
     res = SearchResult(
         chunk=chunk,

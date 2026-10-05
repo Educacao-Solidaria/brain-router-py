@@ -1,6 +1,5 @@
-from abc import ABC, abstractmethod
-from typing import List
 import hashlib
+from abc import ABC, abstractmethod
 
 from app.errors.exceptions import EmbeddingServiceError, RerankServiceError
 from app.schemas.domain import Chunk, SearchResult
@@ -16,12 +15,12 @@ class BaseEmbeddingClient(ABC):
         pass
 
     @abstractmethod
-    async def embed_query(self, text: str) -> List[float]:
+    async def embed_query(self, text: str) -> list[float]:
         """Gera o vetor de embedding para uma consulta isolada."""
         pass
 
     @abstractmethod
-    async def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         """Gera vetores de embeddings em lote para multiplos textos."""
         pass
 
@@ -33,9 +32,9 @@ class BaseRerankerClient(ABC):
     async def rerank(
         self,
         query: str,
-        chunks: List[Chunk],
+        chunks: list[Chunk],
         top_n: int = 5,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Reordena chunks candidatos calculando relevance score com base na query."""
         pass
 
@@ -50,7 +49,7 @@ class MockEmbeddingClient(BaseEmbeddingClient):
     def dimension(self) -> int:
         return self._dim
 
-    def _generate_vector(self, text: str) -> List[float]:
+    def _generate_vector(self, text: str) -> list[float]:
         if not text.strip():
             raise EmbeddingServiceError("Texto vazio para geracao de embedding")
         # Gera vetor deterministico via SHA-256
@@ -62,10 +61,10 @@ class MockEmbeddingClient(BaseEmbeddingClient):
         norm = sum(x * x for x in repeated) ** 0.5
         return [x / norm for x in repeated]
 
-    async def embed_query(self, text: str) -> List[float]:
+    async def embed_query(self, text: str) -> list[float]:
         return self._generate_vector(text)
 
-    async def embed_documents(self, texts: List[str]) -> List[List[float]]:
+    async def embed_documents(self, texts: list[str]) -> list[list[float]]:
         return [self._generate_vector(t) for t in texts]
 
 
@@ -75,14 +74,14 @@ class MockRerankerClient(BaseRerankerClient):
     async def rerank(
         self,
         query: str,
-        chunks: List[Chunk],
+        chunks: list[Chunk],
         top_n: int = 5,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         if not query.strip():
             raise RerankServiceError("Query vazia para operacao de reranking")
 
         terms = [t.lower() for t in query.split() if t]
-        scored: List[tuple[Chunk, float]] = []
+        scored: list[tuple[Chunk, float]] = []
 
         for chunk in chunks:
             content_lower = chunk.content.lower()
@@ -91,7 +90,7 @@ class MockRerankerClient(BaseRerankerClient):
             scored.append((chunk, score))
 
         scored.sort(key=lambda item: item[1], reverse=True)
-        results: List[SearchResult] = []
+        results: list[SearchResult] = []
         for rank, (chunk, score) in enumerate(scored[:top_n], start=1):
             results.append(
                 SearchResult(
