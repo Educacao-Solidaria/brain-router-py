@@ -5,6 +5,7 @@ description = "Hybrid RAG knowledge router & evaluation engine"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "alembic>=1.13",
     "asyncpg>=0.29.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.4.0",
@@ -56,6 +57,10 @@ ignore_missing_imports = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# Testes `integration` precisam de Postgres com pgvector (job `integration` do CI ou
+# `docker compose up -d db`); rode-os com `uv run pytest -m integration`.
+addopts = ["-m", "not integration", "--strict-markers"]
+markers = ["integration: precisa de PostgreSQL com pgvector em DATABASE_URL"]
 
 [tool.coverage.run]
 branch = true

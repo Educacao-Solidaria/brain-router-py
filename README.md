@@ -61,6 +61,25 @@ teste (`tests/test_tooling.py`) falha se os dois divergirem.
 | `uv run brain-router --version` | CLI do pacote (entry point `app.__main__:main`) |
 | `uv run pre-commit run --all-files` | todos os hooks sobre o repositório inteiro |
 | `uv add <pacote>` / `uv add --optional dev <pacote>` | nova dependência, já atualizando o `uv.lock` |
+| `uv run alembic upgrade head` | aplica as migrações (lê `DATABASE_URL`; nada de URL no `alembic.ini`) |
+| `uv run alembic upgrade head --sql` | só imprime o SQL das migrações, sem conectar nem pedir credencial |
+
+### Testes de integração (PostgreSQL + pgvector)
+
+Testes marcados com `@pytest.mark.integration` precisam de banco e ficam fora do
+`pytest` padrão (e do `scripts/check.sh`). No CI, o job `integration` sobe o
+service `pgvector/pgvector:pg17`, espera o healthcheck, roda `alembic upgrade head`
+e então `pytest -m integration`. Localmente, com Docker:
+
+```bash
+docker compose up -d --wait db
+export DATABASE_URL=postgresql://brain:brain-local@localhost:5432/brain_router_test
+export OPENROUTER_API_KEY=sk-or-v1-local
+uv run pytest -m integration
+docker compose down -v           # descarta o volume
+```
+
+Sem `DATABASE_URL` os testes de integração falham em vez de pular — de propósito.
 
 Os hooks de pre-commit usam o ambiente do projeto (`uv run`), então ruff e mypy
 rodam nas versões travadas no `uv.lock` — as mesmas do CI. Se o
