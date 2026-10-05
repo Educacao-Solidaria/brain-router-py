@@ -13,6 +13,7 @@ que o servidor, um proxy ou o NAT derrubou) e `pool_recycle` troca conexões mai
 que N segundos, antes de qualquer timeout de ociosidade do lado de lá.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -40,8 +41,12 @@ def create_engine(settings: Settings) -> AsyncEngine:
         pool_recycle=settings.db_pool_recycle,
         pool_pre_ping=settings.db_pool_pre_ping,
         echo=settings.db_echo,
-        # Identifica as conexões em pg_stat_activity.
-        connect_args={"server_settings": {"application_name": APPLICATION_NAME}},
+        connect_args={
+            # Identifica as conexões em pg_stat_activity.
+            "server_settings": {"application_name": APPLICATION_NAME},
+            # Sem isto o asyncpg espera 60 s por um host que não responde.
+            "timeout": settings.db_connect_timeout,
+        },
     )
     log.info(
         "db.engine_created",
@@ -57,15 +62,16 @@ def create_engine(settings: Settings) -> AsyncEngine:
 class Database:
     """Dono do engine e da fábrica de sessões."""
 
-    def __init__(self, engine: AsyncEngine) -> None:
+    def __init__(self, engine: AsyncEngine, *, ping_timeout: float = 10.0) -> None:
         self.engine = engine
+        self._ping_timeout = ping_timeout
         # expire_on_commit=False: objetos continuam legíveis depois do commit, sem I/O
         # implícito (lazy load) que em asyncio vira MissingGreenlet.
         self._sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
     @classmethod
     def from_settings(cls, settings: Settings) -> "Database":
-        return cls(create_engine(settings))
+        return cls(create_engine(settings), ping_timeout=settings.db_connect_timeout)
 
     @asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
@@ -79,9 +85,13 @@ class Database:
             await session.commit()
 
     async def ping(self) -> bool:
-        """Health check (`SELECT 1`). Nunca levanta: falha vira `False` + log de aviso."""
+        """Health check (`SELECT 1`). Nunca levanta: falha vira `False` + log de aviso.
+
+        Limitado a `ping_timeout` segundos no total (espera do pool + conexão + query):
+        o TimeoutError resultante é um OSError e cai no mesmo `except`.
+        """
         try:
-            async with self.engine.connect() as conn:
+            async with asyncio.timeout(self._ping_timeout), self.engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
         # asyncpg levanta erros próprios ao conectar (senha errada, banco inexistente) que o
         # SQLAlchemy não embrulha. CancelledError é BaseException e continua propagando.

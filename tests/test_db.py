@@ -59,7 +59,16 @@ def test_engine_tags_connections_with_application_name(
     create_engine(make_settings())
 
     connect_args = spy.call_args.kwargs["connect_args"]
-    assert connect_args == {"server_settings": {"application_name": "brain-router-py"}}
+    assert connect_args["server_settings"] == {"application_name": "brain-router-py"}
+
+
+def test_engine_sets_connect_timeout_from_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    spy = MagicMock(wraps=create_async_engine)
+    monkeypatch.setattr("app.db.create_async_engine", spy)
+
+    create_engine(make_settings(db_connect_timeout=3.5))
+
+    assert spy.call_args.kwargs["connect_args"]["timeout"] == 3.5
 
 
 def test_engine_creation_log_hides_password() -> None:
@@ -146,6 +155,21 @@ def _engine_failing_with(exc: BaseException) -> MagicMock:
 )
 async def test_ping_returns_false_on_asyncpg_errors(exc: Exception) -> None:
     assert await Database(_engine_failing_with(exc)).ping() is False
+
+
+async def test_ping_gives_up_after_timeout() -> None:
+    @asynccontextmanager
+    async def hanging_connect() -> AsyncIterator[MagicMock]:
+        await asyncio.sleep(30)
+        yield MagicMock()  # pragma: no cover
+
+    fake_engine = MagicMock(spec=AsyncEngine)
+    fake_engine.connect = hanging_connect
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    assert await Database(fake_engine, ping_timeout=0.05).ping() is False
+    assert loop.time() - started < 5
 
 
 async def test_ping_does_not_swallow_cancellation() -> None:

@@ -36,6 +36,9 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=5, ge=1, le=100)
     db_max_overflow: int = Field(default=10, ge=0, le=100)
     db_pool_timeout: float = Field(default=30.0, gt=0)
+    db_connect_timeout: float = Field(
+        default=10.0, gt=0, description="Segundos para abrir conexão e para o ping."
+    )
     db_pool_recycle: int = Field(default=1800, ge=-1, description="Segundos; -1 desliga.")
     db_pool_pre_ping: bool = True
     db_echo: bool = False
