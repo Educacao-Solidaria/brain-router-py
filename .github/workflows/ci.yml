@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   check:
-    name: lint, format e testes
+    name: lint, format, tipos e testes
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -29,10 +29,13 @@ jobs:
         run: uv sync --locked --extra dev
 
       - name: Ruff (lint)
-        run: uv run ruff check --output-format=github .
+        run: uv run ruff check .
 
       - name: Ruff (format)
         run: uv run ruff format --check .
+
+      - name: Mypy (strict)
+        run: uv run mypy
 
       - name: Pytest
         run: uv run pytest
