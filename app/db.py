@@ -16,6 +16,7 @@ que N segundos, antes de qualquer timeout de ociosidade do lado de lá.
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import asyncpg
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
@@ -82,7 +83,9 @@ class Database:
         try:
             async with self.engine.connect() as conn:
                 await conn.execute(text("SELECT 1"))
-        except (OSError, SQLAlchemyError) as exc:
+        # asyncpg levanta erros próprios ao conectar (senha errada, banco inexistente) que o
+        # SQLAlchemy não embrulha. CancelledError é BaseException e continua propagando.
+        except (OSError, SQLAlchemyError, asyncpg.PostgresError, asyncpg.InterfaceError) as exc:
             # Só o tipo: a mensagem do driver pode trazer host/usuário.
             log.warning("db.ping_failed", error=type(exc).__name__)
             return False

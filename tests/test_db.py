@@ -1,11 +1,13 @@
 """Testes sem Postgres: o pool é preguiçoso, então só o que conecta precisa de dublê."""
 
+import asyncio
 import io
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import asyncpg
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -126,6 +128,29 @@ async def test_ping_returns_false_when_database_is_unreachable() -> None:
         assert await db.ping() is False
     finally:
         await db.dispose()
+
+
+def _engine_failing_with(exc: BaseException) -> MagicMock:
+    fake_engine = MagicMock(spec=AsyncEngine)
+    fake_engine.connect.side_effect = exc
+    return fake_engine
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        asyncpg.InvalidPasswordError("password authentication failed"),
+        asyncpg.InvalidCatalogNameError('database "x" does not exist'),
+        asyncpg.InterfaceError("connection is closed"),
+    ],
+)
+async def test_ping_returns_false_on_asyncpg_errors(exc: Exception) -> None:
+    assert await Database(_engine_failing_with(exc)).ping() is False
+
+
+async def test_ping_does_not_swallow_cancellation() -> None:
+    with pytest.raises(asyncio.CancelledError):
+        await Database(_engine_failing_with(asyncio.CancelledError())).ping()
 
 
 async def test_dispose_closes_pool(engine: AsyncEngine) -> None:
