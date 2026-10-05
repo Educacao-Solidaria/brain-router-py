@@ -116,6 +116,21 @@ def test_exceptions_are_structured(output: io.StringIO) -> None:
     assert line["exception"][0]["exc_type"] == "ValueError"
 
 
+def test_exception_traceback_does_not_leak_locals(output: io.StringIO) -> None:
+    def connect() -> None:
+        dsn = "postgresql://app:s3nh4-vazada@db/app"
+        raise ConnectionError(f"falha ao conectar em {dsn.split('@')[1]}")
+
+    try:
+        connect()
+    except ConnectionError:
+        get_logger().exception("db_down")
+
+    (line,) = read_lines(output)
+    assert "s3nh4-vazada" not in json.dumps(line)
+    assert all("locals" not in frame for exc in line["exception"] for frame in exc["frames"])
+
+
 def test_console_renderer_for_local_development() -> None:
     stream = io.StringIO()
     configure_logging("INFO", json=False, stream=stream)
