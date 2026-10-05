@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
@@ -28,7 +28,7 @@ class Document(BaseModel):
         default="default", description="Identificador do tenant para isolamento"
     )
     created_at: datetime = Field(
-        default_factory=datetime.utcnow, description="Data de criação"
+        default_factory=lambda: datetime.now(timezone.utc), description="Data de criação"
     )
     chunks_count: int = Field(0, ge=0, description="Quantidade total de chunks gerados")
 
