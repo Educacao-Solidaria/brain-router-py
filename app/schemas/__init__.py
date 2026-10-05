@@ -1,4 +1,5 @@
 from app.schemas.domain import Chunk, Document, SearchResult
+from app.schemas.collection import ChunkFilter, ChunkPosition, Collection, EmbeddingVector
 from app.schemas.mcp import (
     EvalMetric,
     EvalRunInput,
