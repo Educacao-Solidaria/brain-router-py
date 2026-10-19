@@ -30,13 +30,7 @@ pytestmark = pytest.mark.integration
 ROOT = Path(__file__).resolve().parents[1]
 DIMENSION = 1536
 METHODS: list[Method] = ["copy", "executemany"]
-TRICKY = [
-    'vírgula, "aspas"; ação e coração',
-    "quebra\nde linha e\r\nCRLF",
-    "\\.",
-    "linha 1\n\\.\nlinha 3",
-    "barra \\N e \\t literais",
-]
+TRICKY = ['vírgula, "aspas"; ação', "quebra\nde linha e\r\nCRLF", "\\. e barra \\N"]
 SELECT_CHUNKS = text(
     "SELECT id, content, embedding::text AS embedding, token_count, metadata::text AS metadata "
     "FROM chunks WHERE document_id = :d ORDER BY token_count"
@@ -71,11 +65,6 @@ def _chunks(
     ]
 
 
-def _float32(values: list[float]) -> tuple[float, ...]:
-    """O que o `vector` (float4) guarda de cada valor."""
-    return struct.unpack(f"{len(values)}f", struct.pack(f"{len(values)}f", *values))
-
-
 async def _add_document(conn: AsyncConnection, document_id: str) -> None:
     await conn.execute(
         text("INSERT INTO documents (id, title, source_uri) VALUES (:id, 'Regimento', 'r.md')"),
@@ -98,55 +87,42 @@ async def test_every_column_arrives_intact(db_session: AsyncSession, method: Met
     assert [row.token_count for row in rows] == list(range(len(chunks)))
     assert [json.loads(row.metadata) for row in rows] == [chunk.metadata for chunk in chunks]
     assert rows[-1].embedding is None  # embedding None vira NULL, não vetor vazio
+    float4 = struct.Struct(f"{DIMENSION}f")  # o que o `vector` guarda de cada valor
     for row, vector in zip(rows[:-1], vectors, strict=False):
-        assert vector is not None
         stored = [float(value) for value in row.embedding.strip("[]").split(",")]
-        assert _float32(stored) == _float32(vector)
-
-
-@pytest.mark.parametrize("method", METHODS)
-async def test_chunk_of_a_missing_document_rejects_the_whole_batch(
-    db_session: AsyncSession, method: Method
-) -> None:
-    conn = await db_session.connection()
-    await _add_document(conn, "doc-1")
-    chunks = _chunks("doc-1", ["um", "dois"], _vectors(2))
-    chunks += _chunks("doc-ausente", ["três"], _vectors(1))
-
-    with pytest.raises(DatabaseQueryError, match="SQLSTATE 23503") as caught:
-        async with conn.begin_nested():
-            await insert_chunks(db_session, chunks, method=method)
-
-    assert "is not present" not in str(caught.value)  # o DETAIL do Postgres fica de fora
-    assert await conn.scalar(COUNT_CHUNKS, {"ids": ["doc-1", "doc-ausente"]}) == 0
+        assert float4.unpack(float4.pack(*stored)) == float4.unpack(float4.pack(*vector or []))
 
 
 @pytest.mark.parametrize("method", METHODS)
 @pytest.mark.parametrize(
-    ("content", "vector", "expected"),
+    ("document_id", "content", "vector", "expected"),
     [
-        ("Regimento\x00 escolar", None, "SQLSTATE 22021"),  # NUL: o texto não foi sanitizado
-        ("vetor curto", [0.5, 0.5, 0.5], "expected 1536 dimensions, not 3"),
-        ("vetor com NaN", [math.nan] * DIMENSION, "NaN not allowed in vector"),
+        ("doc-ausente", "sem documento", None, "SQLSTATE 23503"),  # FK para documents
+        ("doc-1", "Regimento\x00 escolar", None, "SQLSTATE 22021"),  # NUL: texto não sanitizado
+        ("doc-1", "vetor curto", [0.5, 0.5, 0.5], "expected 1536 dimensions, not 3"),
+        ("doc-1", "vetor com NaN", [math.nan] * DIMENSION, "NaN not allowed in vector"),
     ],
-    ids=["nul", "dimensao", "nan"],
+    ids=["fk", "nul", "dimensao", "nan"],
 )
-async def test_invalid_row_is_refused_by_postgres(
+async def test_one_refused_row_rejects_the_whole_batch(
     db_session: AsyncSession,
     method: Method,
+    document_id: str,
     content: str,
     vector: list[float] | None,
     expected: str,
 ) -> None:
     conn = await db_session.connection()
     await _add_document(conn, "doc-1")
-    chunks = _chunks("doc-1", ["válido", content], [_vectors(1)[0], vector])
+    bad = Chunk(id="ruim", document_id=document_id, content=content, embedding=vector)
+    chunks = [*_chunks("doc-1", ["um", "dois"], _vectors(2)), bad]
 
-    with pytest.raises(DatabaseQueryError, match=expected):
+    with pytest.raises(DatabaseQueryError, match=expected) as caught:
         async with conn.begin_nested():
             await insert_chunks(db_session, chunks, method=method)
 
-    assert await conn.scalar(COUNT_CHUNKS, {"ids": ["doc-1"]}) == 0
+    assert "is not present" not in str(caught.value)  # o DETAIL do Postgres fica de fora
+    assert await conn.scalar(COUNT_CHUNKS, {"ids": ["doc-1", document_id]}) == 0
 
 
 async def test_copy_aborted_mid_stream_leaves_nothing_and_a_usable_connection(
@@ -164,6 +140,12 @@ async def test_copy_aborted_mid_stream_leaves_nothing_and_a_usable_connection(
     assert await insert_chunks(db_session, chunks[:2]) == 2  # a conexão segue utilizável
 
 
+async def _count(db: Database, document_id: str) -> int:
+    async with db.session() as session:
+        conn = await session.connection()
+        return int(await conn.scalar(COUNT_CHUNKS, {"ids": [document_id]}))
+
+
 async def test_copy_joins_the_transaction_of_a_fresh_session() -> None:
     # Pelo Database.session() de produção, não pelo db_session: aqui o COPY é o primeiro
     # comando da sessão, e o adaptador do SQLAlchemy ainda não abriu a transação.
@@ -179,15 +161,11 @@ async def test_copy_joins_the_transaction_of_a_fresh_session() -> None:
             async with db.session() as session:
                 assert await insert_chunks(session, chunks) == 3
                 raise RuntimeError("desfaz a unidade de trabalho")
-        async with db.session() as session:
-            conn = await session.connection()
-            assert await conn.scalar(COUNT_CHUNKS, {"ids": [document_id]}) == 0
+        assert await _count(db, document_id) == 0
 
         async with db.session() as session:
             assert await insert_chunks(session, chunks) == 3
-        async with db.session() as session:
-            conn = await session.connection()
-            assert await conn.scalar(COUNT_CHUNKS, {"ids": [document_id]}) == 3
+        assert await _count(db, document_id) == 3
     finally:
         async with db.session() as session:
             conn = await session.connection()

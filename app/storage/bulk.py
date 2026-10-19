@@ -1,29 +1,22 @@
 """Inserção em lote de chunks com embedding na tabela `chunks`: COPY binário ou executemany.
 
 `insert_chunks(session, chunks, *, method="copy")` grava na transação da sessão e devolve
-quantos chunks entraram. Tudo ou nada: o lote é um comando só (COPY) ou uma execução só do
-asyncpg (executemany), e qualquer linha recusada derruba o lote inteiro.
+quantos entraram. Tudo ou nada: qualquer linha recusada derruba o lote inteiro.
 
-- `copy` (padrão): `COPY chunks (...) FROM STDIN (FORMAT binary)` pela conexão asyncpg da
-  sessão. O formato binário é montado aqui com `struct`; o do `vector` é o do `vector_send`
-  do pgvector (int16 dimensão, int16 zero, os float4 em big-endian). O vetor vai como 4
-  bytes por valor, sem virar texto nem ser relido pelo servidor, que é onde o tempo vai num
-  lote de vetores: em texto (CSV), o COPY mediu o mesmo que o executemany. Não precisa de
-  codec de `vector` no asyncpg (o `copy_records_to_table` exigiria um, e registrá-lo numa
-  conexão do pool mudaria o tipo que o resto do código recebe ao ler `embedding`). Os dados
-  saem em blocos de ~1 MB gerados sob demanda: memória constante, e o event loop fica livre
-  entre um bloco e outro.
-- `executemany`: o INSERT preparado uma vez e executado para todas as linhas (a lista de
-  parâmetros vira `executemany` no asyncpg), com o vetor em texto e CAST. Não usa a conexão
-  crua do asyncpg.
+- `copy` (padrão): `COPY ... FROM STDIN (FORMAT binary)` pela conexão asyncpg da sessão, com
+  o formato montado aqui por `struct` (o `vector` como no `vector_send`: int16 dimensão,
+  int16 zero, float4 big-endian). Em texto, formatar e reler 1,5 mil floats por chunk custa
+  mais que o protocolo: o COPY em CSV mediu o mesmo que o executemany. Sem codec de `vector`
+  no asyncpg, que mudaria o tipo lido pelo resto do código nas conexões do pool. Blocos de
+  ~1 MB gerados sob demanda: memória constante e event loop livre entre um bloco e outro.
+- `executemany`: INSERT preparado uma vez, vetor em texto com CAST, sem a conexão crua.
 
-O banco valida, e aqui não se repete: a FK para `documents` (chunk de documento que não
-existe derruba o lote), os CHECKs, a dimensão do `vector(1536)` e NaN/inf no vetor. O texto
-deve vir do `sanitize_text` (o Postgres recusa NUL). Erro do banco vira `DatabaseQueryError`
-com o SQLSTATE e a mensagem, sem o DETAIL, que pode trazer a linha inteira (texto e vetor).
-Depois dele a transação fica abortada: quem chamou desfaz, como o `Database.session()` faz.
-No COPY, um valor que nem chega a ser codificado (número fora do float4, vetor com mais de
-32767 dimensões) vira `ValueError` com o id do chunk, e o COPY é abortado do mesmo jeito.
+O banco valida FK para `documents`, CHECKs, dimensão do `vector(1536)` e NaN/inf; o texto
+deve vir do `sanitize_text` (NUL é recusado). Erro do banco vira `DatabaseQueryError` com
+SQLSTATE e mensagem, sem o DETAIL (que pode trazer a linha inteira, texto e vetor), e deixa
+a transação abortada para quem chamou desfazer (o `Database.session()` já faz). No COPY,
+valor que não cabe no formato (fora do float4, mais de 32767 dimensões) vira `ValueError`
+com o id do chunk.
 """
 
 import asyncio

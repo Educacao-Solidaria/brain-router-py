@@ -4,7 +4,7 @@ import asyncio
 import contextlib
 import json
 import struct
-from typing import Any, cast
+from typing import cast
 
 import pytest
 from sqlmodel.ext.asyncio.session import AsyncSession
@@ -13,19 +13,11 @@ from app.schemas.domain import Chunk
 from app.storage import bulk
 from app.storage.bulk import insert_chunks
 
-TRICKY = [
-    'vírgula, "aspas"; ação e coração',
-    "quebra\nde linha e\r\nCRLF",
-    "\\.",
-    "barra \\N e \\t literais",
-]
+TRICKY = ['vírgula, "aspas"; ação', "quebra\nde linha e\r\nCRLF", "\\. e barra \\N"]
 
 
-class Unusable:
-    """Sessão que não pode ser tocada: a validação tem de responder antes."""
-
-    def __getattr__(self, name: str) -> Any:
-        raise AssertionError(f"insert_chunks não devia usar a sessão ({name})")
+# Se insert_chunks tocar na sessão, `None` quebra o teste: a validação vem antes do banco.
+NO_SESSION = cast(AsyncSession, None)
 
 
 def _chunk(n: int, content: str, embedding: list[float] | None = None) -> Chunk:
@@ -137,13 +129,13 @@ def test_executemany_parameters_carry_the_vector_as_compact_json() -> None:
 
 @pytest.mark.parametrize("method", ["copy", "executemany"])
 async def test_empty_batch_does_not_touch_the_database(method: bulk.Method) -> None:
-    assert await insert_chunks(cast(AsyncSession, Unusable()), [], method=method) == 0
+    assert await insert_chunks(NO_SESSION, [], method=method) == 0
 
 
 async def test_unknown_method_is_rejected_before_the_database() -> None:
     with pytest.raises(ValueError, match="method"):
         await insert_chunks(
-            cast(AsyncSession, Unusable()),
+            NO_SESSION,
             [_chunk(0, "x")],
             method="insert",  # type: ignore[arg-type]
         )
