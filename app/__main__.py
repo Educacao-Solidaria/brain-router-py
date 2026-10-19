@@ -19,10 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
         version=f"%(prog)s {__version__}",
     )
     commands = parser.add_subparsers(dest="command", metavar="comando")
-    check = commands.add_parser(
-        "check-integrity",
-        help="audita documentos e vetores no banco de DATABASE_URL (só leitura sem --fix)",
-    )
+    check = commands.add_parser("check-integrity", help="audita documentos e vetores do banco")
     check.add_argument("--fix", action="store_true", help="corrige o que é seguro, numa transação")
     check.add_argument("--min-age-hours", type=float, default=1.0, help="prazo do documento vazio")
     check.add_argument("--max-changes", type=int, default=1000, help="teto de linhas do --fix")

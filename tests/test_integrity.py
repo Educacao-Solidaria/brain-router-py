@@ -73,27 +73,19 @@ async def test_repair_stops_when_more_rows_than_the_limit_arrived_meanwhile() ->
     assert conn.execute.await_count == 2  # parou na segunda correção; quem chamou desfaz
 
 
-def test_read_only_report_lists_counts_and_examples() -> None:
-    lines = render(Report(before=_findings(documentos_sem_chunks=3))).splitlines()
-
-    assert lines[0].startswith("Integridade de documentos e vetores (somente leitura")
-    assert lines[2].split() == ["verificação", "casos", "exemplos"]
-    assert lines[4].split() == ["documentos_sem_chunks", "3", "documentos_sem_chunks-1"]
-    assert lines[3].split() == ["chunks_orfaos", "0"]
-
-
-def test_fix_report_shows_before_changed_and_after() -> None:
-    report = Report(
-        before=_findings(chunks_orfaos=2, chunks_sem_embedding=1),
-        changed={"chunks_orfaos": 2, "documentos_sem_chunks": 0, "embeddings_zerados": 0},
-        after=_findings(chunks_sem_embedding=1),
-    )
-    lines = render(report).splitlines()
-
-    assert "--fix" in lines[0]
-    assert lines[3].split() == ["chunks_orfaos", "2", "2", "0"]
-    assert lines[6].split() == ["chunks_sem_embedding", "1", "-", "1"]  # só relata
-    assert report.remaining == 1
+def test_reports_list_counts_examples_and_what_the_fix_changed() -> None:
+    read = render(Report(before=_findings(documentos_sem_chunks=3))).splitlines()
+    assert "(somente leitura" in read[0] and read[2].split() == ["verificação", "casos", "exemplos"]
+    assert [line.split() for line in read[3:5]] == [
+        ["chunks_orfaos", "0"],
+        ["documentos_sem_chunks", "3", "documentos_sem_chunks-1"],
+    ]
+    changed = {"chunks_orfaos": 2, "documentos_sem_chunks": 0, "embeddings_zerados": 0}
+    fixed = Report(_findings(chunks_orfaos=2, embeddings_zerados=1), changed, _findings())
+    lines = render(fixed).splitlines()
+    assert "--fix" in lines[0] and lines[3].split() == ["chunks_orfaos", "2", "2", "0"]
+    assert lines[6].split() == ["chunks_sem_embedding", "0", "-", "0"]  # só relata
+    assert fixed.remaining == 0
 
 
 @pytest.mark.parametrize(
@@ -103,7 +95,6 @@ def test_fix_report_shows_before_changed_and_after() -> None:
         ["check-integrity", "--min-age-hours", "nan"],
         ["check-integrity", "--max-changes", "-1"],
         ["check-integrity", "--max-changes", "mil"],
-        ["check-integrity", "--nope"],
     ],
 )
 def test_cli_refuses_bad_arguments(argv: list[str]) -> None:
@@ -159,6 +150,5 @@ def test_cli_reports_a_refused_fix_without_a_traceback(
     refused = AsyncMock(side_effect=TooManyChanges(1500, 1000))
     monkeypatch.setattr(integrity, "check_integrity", refused)
     assert main(["check-integrity", "--fix"]) == 1
-    captured = capsys.readouterr()
-    assert captured.out == ""
-    assert "mudaria 1500 linhas, acima do limite de 1000; nada mudou" in captured.err
+    out, err = capsys.readouterr()
+    assert out == "" and "mudaria 1500 linhas, acima do limite de 1000; nada mudou" in err

@@ -1,22 +1,19 @@
 """Auditoria da consistência entre documentos e vetores: `brain-router check-integrity`.
 
-Somente leitura por padrão: roda no `Database.read()` (READ ONLY, o Postgres impede escrita)
-e só relata. Com `--fix`, corrige o que tem conserto seguro numa transação só, com a contagem
-antes e depois; acima de `max_changes` linhas, recusa e desfaz.
+Somente leitura por padrão: roda no `Database.read()` (READ ONLY) e só relata. Com `--fix`,
+corrige o que tem conserto seguro numa transação só, com a contagem antes e depois, acima de
+`max_changes` linhas recusa e desfaz, e a escrita em `chunks` espera até o commit.
 
-O schema (0002/0003) já garante: todo chunk aponta para documento existente (FK NOT NULL, e
-apagar o documento leva os chunks, ON DELETE CASCADE), vetor de 1536 dimensões sem NaN nem
-infinito (pgvector), conteúdo e título não vazios, `token_count >= 0`, `metadata` objeto.
-O que ele deixa passar, e que se procura aqui (correção do `--fix` entre colchetes):
-- `chunks_orfaos`: chunk sem documento; só com a FK contornada (`session_replication_role =
-  replica`, `DISABLE TRIGGER`), mas aparece na busca sem dono [apagar].
-- `documentos_sem_chunks`: ingestão que parou no meio, fora de toda busca; só conta depois de
-  `min_age_hours`, para não pegar uma ingestão em andamento [apagar].
-- `embeddings_zerados`: norma zero, o cosseno dá NaN e o chunk sai do ranking [vira NULL, de
-  volta à fila do embedding].
-- `chunks_sem_embedding`: fora da busca vetorial [só relata: falta gerar o embedding].
-- `colecoes_com_varios_tenants`: a busca por coleção misturaria tenants [só relata: de quem é
-  cada documento é decisão humana].
+O schema (0002/0003) já garante: chunk com documento (FK NOT NULL, ON DELETE CASCADE), vetor
+de 1536 dimensões sem NaN nem infinito, conteúdo e título não vazios, `token_count >= 0` e
+`metadata` objeto. O que ele deixa passar, e se procura aqui ([correção do --fix]):
+- `chunks_orfaos`: só com a FK contornada (`session_replication_role`, `DISABLE TRIGGER`),
+  mas o órfão aparece na busca sem dono [apagar];
+- `documentos_sem_chunks`: ingestão que parou no meio, criada há mais de `min_age_hours`
+  (para não pegar uma em andamento), fora de toda busca [apagar];
+- `embeddings_zerados`: o cosseno dá NaN e o chunk sai do ranking [NULL: volta à fila];
+- `chunks_sem_embedding`: fora da busca vetorial [só relata];
+- `colecoes_com_varios_tenants`: a busca por coleção misturaria tenants [só relata].
 """
 
 import math
@@ -134,6 +131,9 @@ async def check_integrity(
     if not fix:
         return Report(before=await db.read(lambda session: audit(session, params)))
     async with db.session() as session:  # tudo numa transação: commit só se nada levantar
+        # Espera as escritas em chunks em andamento e barra as novas até o commit: sem isso, o
+        # documento "vazio" que uma ingestão enche agora sairia, e o CASCADE levaria os chunks.
+        await (await session.connection()).execute(text("LOCK TABLE chunks IN SHARE MODE"))
         before = await audit(session, params)
         pending = sum(before[check.name].count for check in CHECKS if check.fix is not None)
         if pending > max_changes:
