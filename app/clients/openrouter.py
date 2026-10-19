@@ -134,6 +134,11 @@ class OpenRouterEmbeddingClient(BaseEmbeddingClient):
     def dimension(self) -> int:
         return self._dimension
 
+    @property
+    def model(self) -> str:
+        """Nome do modelo na OpenRouter (ex.: o `model` do `CachedEmbeddingClient`)."""
+        return self._model
+
     async def embed_query(self, text: str) -> list[float]:
         (vector,) = await self.embed_documents([text])
         return vector
