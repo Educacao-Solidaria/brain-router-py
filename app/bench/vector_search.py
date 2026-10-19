@@ -3,11 +3,12 @@
     uv run python -m app.bench.vector_search --vectors 50000 --queries 300
 
 Numa transação que sempre termina em ROLLBACK (nada fica no banco, nem se o processo morrer),
-uma tabela UNLOGGED própria (a TEMP viveria nos 8 MB de buffers locais da sessão, não em
-`shared_buffers`) recebe N vetores de 1536 dimensões gerados no servidor, sempre os mesmos
-(`setseed`). Mede a busca exata (gabarito do recall), constrói o HNSW (cosine) do perfil
-`balanced` e mede a busca com o `ef_search` de cada perfil. Cada consulta leva o vetor como
-parâmetro, como o `search_vector` fará, e é medida sozinha, depois de um aquecimento.
+uma tabela UNLOGGED própria (a TEMP viveria nos 8 MB de buffers locais da sessão) recebe N
+vetores de 1536 dimensões gerados no servidor, sempre os mesmos (`setseed`): 32 fatores
+aleatórios repetidos ao longo das dimensões, mais ruído, para ter a dimensão intrínseca baixa
+dos embeddings de texto (com vetores uniformes, o caso patológico do HNSW, o recall@10 medido
+foi 0,05). Mede a busca exata (gabarito), constrói o HNSW (cosine) do perfil `balanced` e mede
+a busca com o `ef_search` de cada perfil, uma consulta por vez com o vetor como parâmetro.
 """
 
 import argparse
@@ -32,6 +33,7 @@ from app.storage.hnsw import EF_SEARCH_RANGE, HnswBuildParams, Recall, ef_search
 DIMENSION = 1536  # a do `chunks.embedding`
 WARMUP = 20  # consultas por linha rodadas antes da medida, fora da conta
 SEED = 0.42  # setseed() dos vetores da tabela; as consultas usam o Random(42)
+LATENT, NOISE = 32, 0.1  # fatores repetidos por vetor e ruído uniforme por coordenada
 PROFILES: tuple[Recall, ...] = ("fast", "balanced", "high")
 # Sem memória para o grafo inteiro (~400 MB com 50 mil vetores), o pgvector constrói em disco.
 BUILD_MEMORY = "1GB"  # maintenance_work_mem
@@ -42,12 +44,13 @@ _VERSIONS = text(
     "SELECT split_part(current_setting('server_version'), ' ', 1), "
     "(SELECT extversion FROM pg_extension WHERE extname = 'vector')"
 )
-# A subconsulta cita o `i` de fora para rodar por linha; sem isso o Postgres a calcularia uma
-# vez só (InitPlan) e todas as linhas teriam o mesmo vetor.
+# As subconsultas citam a linha de fora para rodar por linha; sem isso o Postgres as calcularia
+# uma vez só (InitPlan) e todas as linhas teriam o mesmo vetor.
 _GENERATE = (
-    "INSERT INTO {table} (id, embedding) SELECT i, (SELECT array_agg(random() * 2 - 1) "
-    f"FROM generate_series(1, {DIMENSION}) WHERE i > 0)::real[]::vector "
-    "FROM generate_series(1, :n) AS i"
+    f"INSERT INTO {{table}} (id, embedding) SELECT i, (SELECT array_agg(z[(j - 1) % {LATENT} + 1]"
+    f" + (random() * 2 - 1) * {NOISE}) FROM generate_series(1, {DIMENSION}) AS j)::real[]::vector"
+    " FROM generate_series(1, :n) AS i, LATERAL (SELECT array_agg(random() * 2 - 1) AS z"
+    f" FROM generate_series(1, {LATENT}) WHERE i > 0) AS latent"
 )
 # Os nomes entram no texto do DDL, que não aceita parâmetro: só hex gerado aqui.
 _CREATE = f"CREATE UNLOGGED TABLE {{table}} (id integer PRIMARY KEY, embedding vector({DIMENSION}))"
@@ -103,10 +106,14 @@ def recall_at_k(found: Sequence[Sequence[int]], truth: Sequence[Sequence[int]]) 
 
 
 def query_vectors(count: int, *, seed: int = 42) -> list[str]:
-    """Vetores de consulta no formato de texto do pgvector, fora da tabela, determinísticos."""
+    """Consultas da mesma distribuição da tabela (fora dela), no formato de texto do pgvector."""
     rng = random.Random(seed)
-    values = (",".join(f"{rng.uniform(-1, 1):.6f}" for _ in range(DIMENSION)) for _ in range(count))
-    return [f"[{vector}]" for vector in values]
+    vectors = []
+    for _ in range(count):
+        latent = [rng.uniform(-1, 1) for _ in range(LATENT)]
+        values = (latent[j % LATENT] + rng.uniform(-NOISE, NOISE) for j in range(DIMENSION))
+        vectors.append("[" + ",".join(f"{value:.6f}" for value in values) + "]")
+    return vectors
 
 
 async def _elapsed(conn: AsyncConnection, statement: TextClause, **params: object) -> float:
@@ -155,8 +162,9 @@ async def run_benchmark(db: Database, *, vectors: int, queries: int, k: int = 10
             exact, truth = await _measure(conn, nearest, probes, k)
 
             await conn.execute(_SET_LOCAL, {"name": "maintenance_work_mem", "value": BUILD_MEMORY})
-            options = build.with_clause()
-            create_index = text(_INDEX.format(index=index, table=table, options=options))
+            create_index = text(
+                _INDEX.format(index=index, table=table, options=build.with_clause())
+            )
             build_seconds = await _elapsed(conn, create_index)
             # Com poucos vetores o planejador preferiria a varredura; a medida é a do índice.
             await conn.execute(_SET_LOCAL, {"name": "enable_seqscan", "value": "off"})
@@ -186,8 +194,8 @@ def render_markdown(report: Report) -> str:
         f"índice em {report.build_seconds:.1f} s. {report.queries} consultas por linha, uma por "
         f"vez na mesma conexão, depois de {WARMUP} de aquecimento; k = {report.k}.",
         "",
-        "Recall contra a busca exata, com vetores uniformes: o pior caso (sem a estrutura de "
-        "embeddings reais). Serve para comparar os perfis entre si, não como o recall da produção.",
+        f"Recall contra a busca exata, com vetores sintéticos ({LATENT} fatores repetidos nas "
+        f"{DIMENSION} dimensões, mais ruído): compara os perfis entre si; não é o da produção.",
         "",
         f"| Busca | ef_search | p50 (ms) | p95 (ms) | p99 (ms) | média (ms) | recall@{report.k} |",
         "|---|---:|---:|---:|---:|---:|---:|",
@@ -201,7 +209,10 @@ def render_markdown(report: Report) -> str:
 
 
 async def _run(args: argparse.Namespace) -> Report:
-    db = Database.from_settings(get_settings())
+    settings = get_settings()
+    if settings.is_production:  # CPU, memória e uma transação longa no banco de verdade
+        raise SystemExit("benchmark recusado com APP_ENV=production")
+    db = Database.from_settings(settings)
     try:
         return await run_benchmark(db, vectors=args.vectors, queries=args.queries, k=args.k)
     finally:

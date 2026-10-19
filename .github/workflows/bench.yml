@@ -1,7 +1,6 @@
 name: Benchmark
 
-# Latência da busca vetorial com 50 mil vetores (app/bench/vector_search.py), fora do CI de todo
-# PR: construir o HNSW leva minutos. Sob demanda e quando o benchmark ou o HNSW mudam.
+# app/bench/vector_search.py com 50 mil vetores, fora do CI de todo PR (o HNSW leva minutos).
 on:
   workflow_dispatch:
     inputs:
@@ -32,8 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # docker run e não service, que não aceita argumentos do postgres: com os 128 MB padrão
-      # de shared_buffers, o índice (~400 MB) seria lido do cache do kernel.
+      # docker run, e não service (sem argumentos do postgres): shared_buffers para o índice caber.
       - name: PostgreSQL com pgvector
         run: |
           docker run -d --name pg -p 5432:5432 \
@@ -58,8 +56,7 @@ jobs:
       - name: Migrações (extensão vector)
         run: uv run alembic upgrade head
 
-      # As entradas vêm por variável de ambiente, não interpoladas no script. `shell: bash`
-      # liga o pipefail: sem ele, o `tee` esconderia a falha do benchmark.
+      # Entrada por variável de ambiente, não interpolada; `shell: bash` liga o pipefail do tee.
       - name: Benchmark
         shell: bash
         env:

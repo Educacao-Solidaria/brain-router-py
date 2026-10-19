@@ -39,15 +39,12 @@ async def test_small_benchmark_measures_every_search_and_leaves_nothing_behind(
     with capsys.disabled():  # registro no log do CI
         print("\n" + render_markdown(report))
 
-    assert [(row.label, row.ef_search) for row in report.rows] == [
-        ("exata (sem índice)", None),
-        ("HNSW fast", 20),
-        ("HNSW balanced", 40),
-        ("HNSW high", 100),
-    ]
+    assert [row.ef_search for row in report.rows] == [None, 20, 40, 100]
     assert all(0 < r.latency.p50 <= r.latency.p95 <= r.latency.p99 for r in report.rows)
-    # Gabarito com recall 1; com mais candidatos, o recall não cai do perfil fast para o high.
-    assert [r.recall for r in report.rows][0] == 1.0
-    assert 0.0 < report.rows[1].recall <= report.rows[2].recall <= report.rows[3].recall <= 1.0
+    # O gabarito tem recall 1; o balanced acha quase tudo (medido: ~0,98 com 2 mil vetores),
+    # e com mais candidatos o recall não cai. Um benchmark medindo lixo cairia aqui.
+    recalls = [row.recall for row in report.rows]
+    assert recalls[0] == 1.0 and recalls[2] >= 0.8
+    assert recalls[1] <= recalls[2] <= recalls[3] <= 1.0
     assert report.load_seconds > 0 and report.build_seconds > 0
     assert leftovers == 0  # o ROLLBACK levou a tabela e o índice

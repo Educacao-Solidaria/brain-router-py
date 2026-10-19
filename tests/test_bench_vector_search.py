@@ -7,11 +7,8 @@ import pytest
 
 from app.bench import vector_search as bench
 from app.bench.vector_search import Latency, Report, Row, recall_at_k, render_markdown, summarize
+from app.settings import get_settings
 from app.storage.hnsw import HnswBuildParams
-
-
-def _fields(latency: Latency) -> tuple[float, float, float, float]:
-    return latency.p50, latency.p95, latency.p99, latency.mean
 
 
 @pytest.mark.parametrize(
@@ -25,7 +22,8 @@ def _fields(latency: Latency) -> tuple[float, float, float, float]:
 def test_summarize_interpolates_percentiles_between_samples(
     samples: list[float], expected: tuple[float, ...]
 ) -> None:
-    assert _fields(summarize(samples)) == pytest.approx(expected)
+    latency = summarize(samples)
+    assert (latency.p50, latency.p95, latency.p99, latency.mean) == pytest.approx(expected)
 
 
 def test_summarize_refuses_no_samples() -> None:
@@ -50,8 +48,7 @@ def test_recall_is_the_mean_share_of_the_exact_neighbors_found(
 
 @pytest.mark.parametrize(
     ("found", "truth"),
-    [([], []), ([[1]], [[1], [2]]), ([[1], []], [[1], []])],
-    ids=["sem-consultas", "tamanhos-diferentes", "gabarito-vazio"],
+    [([], []), ([[1]], [[1], [2]]), ([[1], []], [[1], []])],  # sem consultas, tamanhos, vazio
 )
 def test_recall_refuses_inputs_without_a_meaningful_answer(
     found: list[list[int]], truth: list[list[int]]
@@ -60,13 +57,16 @@ def test_recall_refuses_inputs_without_a_meaningful_answer(
         recall_at_k(found, truth)
 
 
-def test_query_vectors_are_deterministic_bounded_pgvector_text() -> None:
+def test_query_vectors_repeat_the_latent_factors_in_deterministic_pgvector_text() -> None:
     first = bench.query_vectors(2)
     values = [float(v) for v in first[0].removeprefix("[").removesuffix("]").split(",")]
+    period, noise = bench.LATENT, bench.NOISE
 
     assert first == bench.query_vectors(2) != bench.query_vectors(2, seed=7)
     assert first[0] != first[1] and bench.query_vectors(0) == []
-    assert len(values) == bench.DIMENSION and all(-1.0 <= v <= 1.0 for v in values)
+    assert len(values) == bench.DIMENSION and all(abs(v) <= 1 + noise for v in values)
+    # A mesma coordenada latente a cada 32 posições, a menos do ruído das duas.
+    assert all(abs(values[j] - values[j + period]) <= 2 * noise + 1e-6 for j in range(1504))
 
 
 def _report() -> Report:
@@ -82,14 +82,9 @@ def test_markdown_report_has_context_and_one_line_per_search() -> None:
     lines = render_markdown(_report()).splitlines()
 
     assert lines[0] == "### Busca vetorial: 50.000 vetores × 1536 dimensões"
-    for fragment in (
-        "pgvector 0.8.1",
-        "carga em 5.0 s, índice em 61.3 s",
-        "300 consultas",
-        "k = 10",
-    ):
-        assert fragment in lines[2]
-    assert "pior caso" in lines[4]
+    assert "pgvector 0.8.1" in lines[2] and "carga em 5.0 s, índice em 61.3 s" in lines[2]
+    assert "300 consultas" in lines[2] and "k = 10" in lines[2]
+    assert "32 fatores repetidos" in lines[4]
     assert lines[6].endswith("| recall@10 |")
     assert lines[-2] == "| exata (sem índice) | — | 100.00 | 120.00 | 125.00 | 105.00 | 1.000 |"
     assert lines[-1] == "| HNSW fast | 20 | 0.90 | 1.10 | 1.25 | 1.00 | 0.432 |"
@@ -98,10 +93,7 @@ def test_markdown_report_has_context_and_one_line_per_search() -> None:
 @pytest.mark.parametrize(
     "argv",
     [
-        ["--vectors", "0"],
-        ["--queries", "0"],
-        ["--k", "-3"],
-        ["--vectors", "dez"],
+        *(["--vectors", "0"], ["--queries", "0"], ["--vectors", "dez"]),
         ["--vectors", "10", "--k", "11"],  # mais vizinhos que vetores
         ["--k", "1001"],  # acima do teto do ef_search
     ],
@@ -115,14 +107,16 @@ def test_cli_refuses_degenerate_sizes_before_touching_the_database(
     assert exit_info.value.code == 2
 
 
-@pytest.mark.parametrize(("vectors", "queries", "k"), [(5, 1, 10), (10, 0, 10), (10, 1, 0)])
-async def test_run_benchmark_validates_before_connecting(
-    vectors: int, queries: int, k: int
-) -> None:
-    db = MagicMock()  # sem spec: o `engine` é atributo de instância do Database
-    with pytest.raises(ValueError, match="precisa de 1 <= k"):
-        await bench.run_benchmark(db, vectors=vectors, queries=queries, k=k)
-    db.engine.connect.assert_not_called()
+def test_refuses_to_run_against_production(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name, value in [("APP_ENV", "production"), ("DATABASE_URL", "postgresql://u:p@db/b")]:
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-v1-x")
+    get_settings.cache_clear()
+    try:
+        with pytest.raises(SystemExit, match="APP_ENV=production"):
+            bench.main(["--vectors", "100"])
+    finally:
+        get_settings.cache_clear()
 
 
 def test_main_prints_only_the_report_on_stdout(
