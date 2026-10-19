@@ -96,10 +96,10 @@ class Database:
     ) -> T:
         """Roda `work` numa transação só de leitura e repete, com outra conexão, se ela cair.
 
-        Cada tentativa é uma sessão nova com `BEGIN READ ONLY`: o Postgres recusa escrita
-        (SQLSTATE 25006), então repetir nunca duplica dado. Termina em rollback. `work` pode
-        rodar mais de uma vez: nada de efeito fora do banco nela. O que repete e a espera
-        entre tentativas estão em `app.reconnect`.
+        Cada tentativa é uma sessão nova com `BEGIN READ ONLY`: o Postgres recusa escrita em
+        tabela (SQLSTATE 25006; só a temporária escapa), então repetir não duplica dado.
+        Termina em rollback. `work` pode rodar mais de uma vez: nada de efeito fora do banco
+        nela. O que repete e a espera entre tentativas estão em `app.reconnect`.
         """
 
         async def attempt() -> T:
