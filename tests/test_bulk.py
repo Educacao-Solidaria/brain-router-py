@@ -7,6 +7,7 @@ import struct
 from typing import cast
 
 import pytest
+from sqlalchemy.exc import DBAPIError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.schemas.domain import Chunk
@@ -125,6 +126,13 @@ def test_executemany_parameters_carry_the_vector_as_compact_json() -> None:
     assert params["embedding"] == "[0.25,1.0,-3e-08]"
     assert bulk._params(_chunk(8, "y"))["embedding"] is None
     assert json.loads(str(params["metadata"])) == {"position": {"start_char": 7}}
+
+
+def test_error_description_never_carries_sql_parameters() -> None:
+    wrapped = DBAPIError("INSERT INTO chunks ...", {"content": "texto do aluno"}, Exception("x"))
+
+    assert bulk._describe(wrapped) == "DBAPIError"
+    assert bulk._describe(RuntimeError("texto do aluno")) == "RuntimeError"
 
 
 @pytest.mark.parametrize("method", ["copy", "executemany"])

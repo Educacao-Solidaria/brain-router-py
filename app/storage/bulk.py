@@ -121,11 +121,13 @@ async def _copy(session: AsyncSession, chunks: Sequence[Chunk]) -> int:
 
 
 def _describe(exc: Exception) -> str:
-    # O DBAPIError do SQLAlchemy embrulha o erro do asyncpg em `orig.__cause__`. `.message`
-    # é só a mensagem primária: o `str()` do asyncpg acrescenta o DETAIL.
+    # O DBAPIError do SQLAlchemy embrulha o erro do asyncpg em `orig.__cause__`. Do erro do
+    # servidor, só a mensagem primária (`.message`): o `str()` do asyncpg acrescenta o DETAIL,
+    # e o do SQLAlchemy, o SQL e os parâmetros. De qualquer outro, só o tipo.
     error = getattr(getattr(exc, "orig", None), "__cause__", None) or exc
-    sqlstate = getattr(error, "sqlstate", None) or "?"
-    return f"SQLSTATE {sqlstate}: {getattr(error, 'message', None) or type(error).__name__}"
+    if isinstance(error, asyncpg.PostgresError):
+        return f"SQLSTATE {error.sqlstate}: {error.message}"
+    return type(error).__name__
 
 
 async def insert_chunks(
