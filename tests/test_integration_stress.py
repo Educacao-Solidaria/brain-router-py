@@ -143,7 +143,7 @@ async def _settle(
     assíncronos do lado de lá. O prazo é de vivacidade, não de desempenho."""
     deadline = asyncio.get_running_loop().time() + 15.0
     while not done(row := await _backends(observer, name)):
-        assert asyncio.get_running_loop().time() < deadline, f"servidor parado em {row}"
+        assert asyncio.get_running_loop().time() < deadline, f"servidor parado em {row._asdict()}"
         await asyncio.sleep(0.02)
     return row
 
@@ -171,7 +171,7 @@ async def _search(db: Database, corpus: Corpus, n: int) -> tuple[list[str], int]
 
 def _assert_own_results(corpus: Corpus, n: int, ids: list[str]) -> None:
     if n % 2:  # o vizinho mais perto é o próprio vetor (distância 0), e vêm os k pedidos
-        assert ids[0] == corpus.chunk_id(n) and len(ids) == TOP_K
+        assert ids[:1] == [corpus.chunk_id(n)] and len(ids) == TOP_K
     else:  # só o chunk n tem o número n no texto
         assert ids == [corpus.chunk_id(n)]
 
@@ -186,10 +186,12 @@ async def test_100_simultaneous_searches_get_their_own_results_within_the_pool(
         sampler = asyncio.create_task(_peak(observer, name, stop))
         targets = range(1, QUERIES + 1)
         started = time.perf_counter()
-        results = await asyncio.gather(*(_search(db, corpus, n) for n in targets))
-        elapsed = time.perf_counter() - started
-        stop.set()
-        peak = await sampler
+        try:
+            results = await asyncio.gather(*(_search(db, corpus, n) for n in targets))
+        finally:  # o amostrador para mesmo se a rajada falhar
+            elapsed = time.perf_counter() - started
+            stop.set()
+            peak = await sampler
         with capsys.disabled():  # registro no log do CI, sem asserção de tempo
             print(
                 f"\n[estresse] {QUERIES} buscas simultâneas em {elapsed:.2f} s; pico de {peak} "
@@ -225,21 +227,25 @@ async def test_errors_and_cancellations_mid_burst_leak_nothing(
         async with db.session() as session:
             await (await session.connection()).execute(text("SELECT 1 / 0"))
 
+    tasks: list[asyncio.Task[Any]] = []
     try:
         sleepers = [asyncio.create_task(sleep_until_cancelled()) for _ in range(40)]
+        tasks += sleepers
         # As 10 conexões dormindo no servidor ao mesmo tempo: nada serializa abaixo do pool.
         await _settle(observer, name, lambda b: b.sleeping == CAPACITY)
         failing = [asyncio.create_task(divide_by_zero()) for _ in range(30)]
         searches = [asyncio.create_task(_search(db, corpus, n)) for n in range(1, 31)]
+        tasks += failing + searches
         for task in sleepers:  # 10 no meio da consulta, 30 ainda na fila do pool
             task.cancel()
         outcomes = await asyncio.gather(*sleepers, *failing, *searches, return_exceptions=True)
 
-        assert all(isinstance(o, asyncio.CancelledError) for o in outcomes[:40])
-        assert all(
-            isinstance(o, DBAPIError) and getattr(o.orig, "sqlstate", None) == "22012"
+        assert [type(o).__name__ for o in outcomes[:40]] == ["CancelledError"] * 40
+        sqlstates = [
+            getattr(o.orig, "sqlstate", None) if isinstance(o, DBAPIError) else repr(o)
             for o in outcomes[40:70]
-        )
+        ]
+        assert sqlstates == ["22012"] * 30
         for n, outcome in enumerate(outcomes[70:], start=1):
             assert isinstance(outcome, tuple), outcome
             _assert_own_results(corpus, n, outcome[0])
@@ -253,6 +259,9 @@ async def test_errors_and_cancellations_mid_burst_leak_nothing(
             _assert_own_results(corpus, n, ids)
         assert len({pid for _, pid in after}) <= CAPACITY
         assert pool.checkedout() == 0
-    finally:
+    finally:  # se algo falhou no meio, nenhuma tarefa fica dormindo depois do teste
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await db.dispose()
     await _settle(observer, name, lambda b: b.total == 0)
