@@ -143,6 +143,8 @@ class OpenRouterEmbeddingClient(BaseEmbeddingClient):
         if any(not text.strip() for text in texts):
             raise EmbeddingServiceError("texto vazio não vira embedding")
         vectors: list[list[float]] = []
+        # ponytail: lotes em série, então a vazão é um pedido por vez. Se a ingestão ficar
+        # lenta, paralelizar com asyncio.Semaphore (o 429 já é tratado em cada pedido).
         for start in range(0, len(texts), self._batch_size):
             vectors.extend(await self._embed_batch(texts[start : start + self._batch_size]))
         return vectors
