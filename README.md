@@ -81,6 +81,14 @@ docker compose down -v           # descarta o volume
 
 Sem `DATABASE_URL` os testes de integração falham em vez de pular — de propósito.
 
+### Contagem de tokens (tiktoken)
+
+`app.tokens` conta tokens com o tiktoken, que baixa o arquivo de cada codificação no
+primeiro uso (cl100k ~1,7 MB, o200k ~3,6 MB, de `openaipublic.blob.core.windows.net`)
+e o guarda em `TIKTOKEN_CACHE_DIR` (sem a variável, numa pasta do diretório
+temporário). O primeiro `pytest` precisa de rede; depois, não. Sem acesso a esse host
+(CI fechado, imagem de produção), deixe os arquivos prontos numa pasta e aponte a variável.
+
 Os hooks de pre-commit usam o ambiente do projeto (`uv run`), então ruff e mypy
 rodam nas versões travadas no `uv.lock` — as mesmas do CI. Se o
 `pyproject.toml` mudar sem `uv lock`, o hook `uv-lock` e o CI barram.
