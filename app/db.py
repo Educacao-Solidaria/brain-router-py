@@ -10,7 +10,8 @@ Uso típico, uma instância por processo:
 
 Keep-alive do pool: `pool_pre_ping` testa a conexão antes de entregá-la (descarta a
 que o servidor, um proxy ou o NAT derrubou) e `pool_recycle` troca conexões mais velhas
-que N segundos, antes de qualquer timeout de ociosidade do lado de lá.
+que N segundos, antes de qualquer timeout de ociosidade do lado de lá. Saturação: o
+`app.pool_monitor` avisa quando o uso chega a `db_pool_warn_ratio` da capacidade.
 """
 
 import asyncio
@@ -24,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.log import get_logger
+from app.pool_monitor import watch_pool
 from app.settings import Settings
 
 APPLICATION_NAME = "brain-router-py"
@@ -48,6 +50,8 @@ def create_engine(settings: Settings) -> AsyncEngine:
             "timeout": settings.db_connect_timeout,
         },
     )
+    capacity = settings.db_pool_size + settings.db_max_overflow
+    watch_pool(engine.sync_engine, capacity=capacity, warn_ratio=settings.db_pool_warn_ratio)
     log.info(
         "db.engine_created",
         url=engine.url.render_as_string(hide_password=True),
@@ -55,6 +59,7 @@ def create_engine(settings: Settings) -> AsyncEngine:
         max_overflow=settings.db_max_overflow,
         pool_recycle=settings.db_pool_recycle,
         pool_pre_ping=settings.db_pool_pre_ping,
+        pool_warn_ratio=settings.db_pool_warn_ratio,
     )
     return engine
 
