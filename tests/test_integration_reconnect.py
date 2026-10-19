@@ -62,7 +62,9 @@ async def _terminate(pid: int, delay: float = 0.0) -> None:
     try:
         async with db.session() as session:
             conn = await session.connection()
-            assert await conn.scalar(text("SELECT pg_terminate_backend(:pid)"), {"pid": pid})
+            # Com prazo (PG 14+), a função só volta depois de o processo sair: sem corrida.
+            killed = text("SELECT pg_terminate_backend(:pid, 5000)")
+            assert await conn.scalar(killed, {"pid": pid})
     finally:
         await db.dispose()
 
