@@ -1,0 +1,67 @@
+name: Benchmark
+
+# Latência da busca vetorial com 50 mil vetores (app/bench/vector_search.py), fora do CI de todo
+# PR: construir o HNSW leva minutos. Sob demanda e quando o benchmark ou o HNSW mudam.
+on:
+  workflow_dispatch:
+    inputs:
+      vectors:
+        description: Vetores na tabela
+        default: "50000"
+  pull_request:
+    paths:
+      - app/bench/**
+      - app/storage/hnsw.py
+      - .github/workflows/bench.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  vector-search:
+    name: busca vetorial (HNSW)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: postgresql://brain:brain-ci@localhost:5432/brain_router_test
+      OPENROUTER_API_KEY: sk-or-v1-ci-placeholder
+    steps:
+      - uses: actions/checkout@v7
+
+      # docker run e não service, que não aceita argumentos do postgres: com os 128 MB padrão
+      # de shared_buffers, o índice (~400 MB) seria lido do cache do kernel.
+      - name: PostgreSQL com pgvector
+        run: |
+          docker run -d --name pg -p 5432:5432 \
+            -e POSTGRES_USER=brain -e POSTGRES_PASSWORD=brain-ci -e POSTGRES_DB=brain_router_test \
+            pgvector/pgvector:pg17 -c shared_buffers=2GB
+          # -h 127.0.0.1: o servidor provisório do initdb só escuta no socket unix.
+          for _ in $(seq 1 30); do
+            docker exec pg pg_isready -h 127.0.0.1 -U brain -d brain_router_test && exit 0
+            sleep 2
+          done
+          docker logs pg
+          exit 1
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      - name: Instalar dependências (lock congelado)
+        run: uv sync --locked --extra dev
+
+      - name: Migrações (extensão vector)
+        run: uv run alembic upgrade head
+
+      # As entradas vêm por variável de ambiente, não interpoladas no script. `shell: bash`
+      # liga o pipefail: sem ele, o `tee` esconderia a falha do benchmark.
+      - name: Benchmark
+        shell: bash
+        env:
+          VECTORS: ${{ inputs.vectors || '50000' }}
+        run: uv run python -m app.bench.vector_search --vectors "$VECTORS" | tee -a "$GITHUB_STEP_SUMMARY"
