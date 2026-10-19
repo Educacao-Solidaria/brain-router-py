@@ -13,8 +13,8 @@ from app.schemas import Chunk, Collection, Document
 
 ROOT = Path(__file__).resolve().parents[1]
 # História esperada, da base para a head. Migração nova entra no fim da lista.
-REVISIONS = ["0001_create_extensions", "0002_documents_and_chunks"]
-FIRST, TABLES = REVISIONS[0], REVISIONS[1]
+REVISIONS = ["0001_create_extensions", "0002_documents_and_chunks", "0003_fulltext_portuguese"]
+FIRST, TABLES, FULLTEXT = REVISIONS[0], REVISIONS[1], REVISIONS[2]
 
 
 def _config() -> tuple[Config, io.StringIO]:
@@ -118,6 +118,42 @@ def test_downgrade_sql_drops_chunks_before_documents_without_cascade() -> None:
     sql = buffer.getvalue()
 
     assert sql.index("DROP TABLE chunks;") < sql.index("DROP TABLE documents;")
+    assert "CASCADE" not in sql.upper()
+
+
+def test_upgrade_sql_adds_generated_portuguese_tsvectors_then_gin_indexes() -> None:
+    config, buffer = _config()
+    command.upgrade(config, f"{TABLES}:{FULLTEXT}", sql=True)
+    sql = " ".join(buffer.getvalue().split())
+
+    # Config explícita nos dois lados: a forma de um argumento é STABLE e o Postgres
+    # recusaria a coluna gerada (só o modo online pegaria isso).
+    steps = [
+        "ALTER TABLE chunks ADD COLUMN content_tsv tsvector "
+        "GENERATED ALWAYS AS (to_tsvector('portuguese', content)) STORED;",
+        "ALTER TABLE documents ADD COLUMN title_tsv tsvector "
+        "GENERATED ALWAYS AS (to_tsvector('portuguese', title)) STORED;",
+        "CREATE INDEX ix_chunks_content_tsv ON chunks USING gin (content_tsv);",
+        "CREATE INDEX ix_documents_title_tsv ON documents USING gin (title_tsv);",
+    ]
+    positions = [sql.index(step) for step in steps]
+    assert positions == sorted(positions)
+    assert sql.index("BEGIN;") < positions[0] and positions[-1] < sql.index("COMMIT;")
+
+
+def test_downgrade_sql_drops_the_indexes_before_the_columns_without_cascade() -> None:
+    config, buffer = _config()
+    command.downgrade(config, f"{FULLTEXT}:{TABLES}", sql=True)
+    sql = buffer.getvalue()
+
+    steps = [
+        "DROP INDEX ix_documents_title_tsv;",
+        "DROP INDEX ix_chunks_content_tsv;",
+        "ALTER TABLE documents DROP COLUMN title_tsv;",
+        "ALTER TABLE chunks DROP COLUMN content_tsv;",
+    ]
+    positions = [sql.index(step) for step in steps]
+    assert positions == sorted(positions)
     assert "CASCADE" not in sql.upper()
 
 
