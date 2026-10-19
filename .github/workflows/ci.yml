@@ -37,8 +37,18 @@ jobs:
       - name: Mypy (strict)
         run: uv run mypy
 
+      # O tiktoken baixa o arquivo de cada codificação no primeiro uso (e confere o SHA-256).
+      # Com o cache, os testes de contagem só dependem da rede quando a chave muda.
+      - name: Cache das codificações do tiktoken
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/tiktoken
+          key: tiktoken-cl100k-o200k-v1
+
       - name: Pytest
         run: uv run pytest
+        env:
+          TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/tiktoken
 
   integration:
     name: integração (postgres + pgvector)
