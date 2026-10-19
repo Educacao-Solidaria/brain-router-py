@@ -1,7 +1,7 @@
 """Sanitização de texto antes de gravar no Postgres e de mandar ao modelo de embedding.
 
-`sanitize_text` devolve um texto que o Postgres aceita em `text` e em `tsvector`, que
-codifica em UTF-8 sem erro e que não esconde nada de quem lê:
+`sanitize_text` devolve um texto que o Postgres aceita em `text`, que codifica em UTF-8
+sem erro, que a busca textual separa em palavras certas e que não esconde nada de quem lê:
 
 - Surrogate solto (de JSON com "\\ud800" ou de bytes lidos com `surrogateescape`) vira
   U+FFFD, e um par de surrogates separado vira o caractere que ele codifica. Sem isso o
@@ -57,7 +57,7 @@ _TABLE: dict[int, str | None] = {
 
 
 def sanitize_text(text: str) -> str:
-    """Texto seguro para `text`/`tsvector` do Postgres e para o modelo de embedding."""
+    """Texto seguro para o `text` do Postgres, a busca textual e o modelo de embedding."""
     # UTF-16 com surrogatepass reúne o par separado; "replace" troca o solto por U+FFFD.
     text = text.encode("utf-16-le", "surrogatepass").decode("utf-16-le", "replace")
     text = text.replace("\r\n", "\n").translate(_TABLE)
