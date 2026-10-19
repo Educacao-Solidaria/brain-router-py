@@ -3,8 +3,9 @@
 Uso típico, uma instância por processo:
 
     db = Database.from_settings(get_settings())
-    async with db.session() as session:
-        rows = await session.exec(select(Model))
+    async with db.session() as session:  # escrita: commit no fim, nunca repete
+        session.add(model)
+    rows = await db.read(lambda s: s.exec(select(Model)))  # leitura: repete se a conexão cair
     ...
     await db.dispose()  # no shutdown
 
@@ -15,7 +16,7 @@ que N segundos, antes de qualquer timeout de ociosidade do lado de lá. Saturaç
 """
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 import asyncpg
@@ -26,6 +27,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.log import get_logger
 from app.pool_monitor import watch_pool
+from app.reconnect import retry_on_disconnect
 from app.settings import Settings
 
 APPLICATION_NAME = "brain-router-py"
@@ -88,6 +90,24 @@ class Database:
                 await session.rollback()
                 raise
             await session.commit()
+
+    async def read[T](
+        self, work: Callable[[AsyncSession], Awaitable[T]], *, attempts: int = 3
+    ) -> T:
+        """Roda `work` numa transação só de leitura e repete, com outra conexão, se ela cair.
+
+        Cada tentativa é uma sessão nova com `BEGIN READ ONLY`: o Postgres recusa escrita em
+        tabela (SQLSTATE 25006; só a temporária escapa), então repetir não duplica dado.
+        Termina em rollback. `work` pode rodar mais de uma vez: nada de efeito fora do banco
+        nela. O que repete e a espera entre tentativas estão em `app.reconnect`.
+        """
+
+        async def attempt() -> T:
+            async with self._sessions() as session:
+                await session.connection(execution_options={"postgresql_readonly": True})
+                return await work(session)
+
+        return await retry_on_disconnect(attempt, attempts=attempts)
 
     async def ping(self) -> bool:
         """Health check (`SELECT 1`). Nunca levanta: falha vira `False` + log de aviso.

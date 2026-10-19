@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import asyncpg
 import pytest
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlmodel.ext.asyncio.session import AsyncSession
 
@@ -111,6 +112,37 @@ async def test_session_rolls_back_and_reraises_on_error(
 
     rollback.assert_awaited_once()
     commit.assert_not_awaited()
+
+
+async def test_read_opens_a_read_only_session_and_never_commits(
+    engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    connection, commit = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(AsyncSession, "connection", connection)
+    monkeypatch.setattr(AsyncSession, "commit", commit)
+
+    async def work(session: AsyncSession) -> str:
+        return "linhas"
+
+    assert await Database(engine).read(work) == "linhas"
+    connection.assert_awaited_once_with(execution_options={"postgresql_readonly": True})
+    commit.assert_not_awaited()
+
+
+async def test_read_retries_a_lost_connection_in_a_new_session(
+    engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(AsyncSession, "connection", AsyncMock())
+    sessions: list[AsyncSession] = []
+
+    async def work(session: AsyncSession) -> int:
+        sessions.append(session)
+        if len(sessions) == 1:
+            raise DBAPIError("SELECT 1", None, Exception("caiu"), connection_invalidated=True)
+        return len(sessions)
+
+    assert await Database(engine).read(work, attempts=2) == 2
+    assert sessions[0] is not sessions[1]  # a tentativa nova não herda a sessão da que caiu
 
 
 async def test_ping_runs_select_one() -> None:
