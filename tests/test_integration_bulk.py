@@ -5,6 +5,7 @@ de pular. O teste de vazão imprime o resultado no log do CI, sem asserção de 
 """
 
 import json
+import math
 import random
 import struct
 import time
@@ -126,8 +127,9 @@ async def test_chunk_of_a_missing_document_rejects_the_whole_batch(
     [
         ("Regimento\x00 escolar", None, "SQLSTATE 22021"),  # NUL: o texto não foi sanitizado
         ("vetor curto", [0.5, 0.5, 0.5], "expected 1536 dimensions, not 3"),
+        ("vetor com NaN", [math.nan] * DIMENSION, "NaN not allowed in vector"),
     ],
-    ids=["nul", "dimensao"],
+    ids=["nul", "dimensao", "nan"],
 )
 async def test_invalid_row_is_refused_by_postgres(
     db_session: AsyncSession,
@@ -145,6 +147,21 @@ async def test_invalid_row_is_refused_by_postgres(
             await insert_chunks(db_session, chunks, method=method)
 
     assert await conn.scalar(COUNT_CHUNKS, {"ids": ["doc-1"]}) == 0
+
+
+async def test_copy_aborted_mid_stream_leaves_nothing_and_a_usable_connection(
+    db_session: AsyncSession,
+) -> None:
+    conn = await db_session.connection()
+    await _add_document(conn, "doc-1")
+    chunks = _chunks("doc-1", ["um", "dois", "três"], [*_vectors(2), [1e39] * DIMENSION])
+
+    with pytest.raises(ValueError, match="doc-1:2"):
+        async with conn.begin_nested():
+            await insert_chunks(db_session, chunks)
+
+    assert await conn.scalar(COUNT_CHUNKS, {"ids": ["doc-1"]}) == 0
+    assert await insert_chunks(db_session, chunks[:2]) == 2  # a conexão segue utilizável
 
 
 async def test_copy_joins_the_transaction_of_a_fresh_session() -> None:
