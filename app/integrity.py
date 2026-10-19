@@ -133,7 +133,10 @@ async def check_integrity(
     async with db.session() as session:  # tudo numa transação: commit só se nada levantar
         # Espera as escritas em chunks em andamento e barra as novas até o commit: sem isso, o
         # documento "vazio" que uma ingestão enche agora sairia, e o CASCADE levaria os chunks.
-        await (await session.connection()).execute(text("LOCK TABLE chunks IN SHARE MODE"))
+        # O prazo evita que uma transação presa congele a ingestão atrás da fila da trava.
+        conn = await session.connection()
+        await conn.execute(text("SET LOCAL lock_timeout = '10s'"))
+        await conn.execute(text("LOCK TABLE chunks IN SHARE MODE"))
         before = await audit(session, params)
         pending = sum(before[check.name].count for check in CHECKS if check.fix is not None)
         if pending > max_changes:
