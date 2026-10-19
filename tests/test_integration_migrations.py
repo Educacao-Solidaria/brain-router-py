@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from app.db import Database
@@ -43,11 +44,17 @@ def _current_revision() -> set[str]:
     return asyncio.run(_query("SELECT version_num FROM alembic_version"))
 
 
+def _head() -> str:
+    head = ScriptDirectory.from_config(_alembic()).get_current_head()
+    assert head is not None
+    return head
+
+
 def test_upgrade_head_creates_extensions() -> None:
     command.upgrade(_alembic(), "head")
 
     assert _installed_extensions() == EXTENSIONS
-    assert _current_revision() == {"0001_create_extensions"}
+    assert _current_revision() == {_head()}
 
 
 def test_upgrade_is_idempotent_and_downgrade_round_trips() -> None:
