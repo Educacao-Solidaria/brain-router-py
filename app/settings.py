@@ -41,6 +41,12 @@ class Settings(BaseSettings):
     )
     db_pool_recycle: int = Field(default=1800, ge=-1, description="Segundos; -1 desliga.")
     db_pool_pre_ping: bool = True
+    db_pool_warn_ratio: float = Field(
+        default=0.8,
+        gt=0,
+        le=1,
+        description="Fração de pool_size + max_overflow que dispara o aviso.",
+    )
     db_echo: bool = False
 
     openrouter_api_key: SecretStr
