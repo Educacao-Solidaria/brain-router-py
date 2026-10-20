@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     openrouter_base_url: HttpUrl = HttpUrl("https://openrouter.ai/api/v1")
     openrouter_timeout: float = Field(default=60.0, gt=0)
 
+    # flow-gateway-go (`app/clients/gateway.py`); sem a URL, o cliente não sobe.
+    gateway_url: HttpUrl | None = None
+    gateway_api_key: SecretStr | None = None
+
     @field_validator("log_level", mode="before")
     @classmethod
     def _upper_log_level(cls, value: object) -> object:
