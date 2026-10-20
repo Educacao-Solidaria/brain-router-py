@@ -28,6 +28,9 @@ dev = [
     "pyyaml>=6.0",
     "types-PyYAML>=6.0",
 ]
+load = [
+    "locust>=2.46.7",
+]
 
 [project.scripts]
 brain-router = "app.__main__:main"

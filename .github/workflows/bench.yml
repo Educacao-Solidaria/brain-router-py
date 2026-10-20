@@ -9,7 +9,7 @@ on:
         default: "50000"
   pull_request:
     paths:
-      - app/bench/**
+      - app/bench/vector_search.py
       - app/storage/hnsw.py
       - .github/workflows/bench.yml
 

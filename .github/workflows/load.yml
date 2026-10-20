@@ -1,0 +1,70 @@
+name: Carga
+
+# Ingestão concorrente com o locust (loadtests/), fora do CI de todo PR: o locust (gevent) só vem
+# no extra `load`, e a rodada leva minutos.
+on:
+  workflow_dispatch:
+    inputs:
+      users:
+        description: Uploads simultâneos
+        default: "20"
+      duration:
+        description: Duração (ex. 60s, 3m)
+        default: "60s"
+  pull_request:
+    paths: [loadtests/**, app/bench/ingest_*.py, app/ingest.py, .github/workflows/load.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: load-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ingest:
+    name: ingestão concorrente (locust)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        # Container descartável do job; a senha não é segredo de ambiente nenhum.
+        env: { POSTGRES_USER: brain, POSTGRES_PASSWORD: brain-ci, POSTGRES_DB: brain_router_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U brain -d brain_router_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env: # entradas por variável de ambiente, nunca interpoladas no script
+      DATABASE_URL: postgresql://brain:brain-ci@localhost:5432/brain_router_test
+      OPENROUTER_API_KEY: sk-or-v1-ci-placeholder
+      USERS: ${{ inputs.users || '20' }}
+      DURATION: ${{ inputs.duration || '60s' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --extra dev --extra load
+      - run: uv run mypy loadtests # o job check do CI não tem o locust
+      - run: uv run alembic upgrade head
+      - name: Carga (os documentos e chunks aceitos têm de bater com os gravados)
+        shell: bash
+        run: |
+          uv run python -m app.bench.ingest_server > server.txt 2> server.err &
+          server=$!
+          for _ in $(seq 1 60); do curl -sf 127.0.0.1:8000/healthz > /dev/null && break; sleep 1; done
+          status=0
+          uv run locust -f loadtests/locustfile.py --headless -H http://127.0.0.1:8000 \
+            -u "$USERS" -r "$USERS" -t "$DURATION" --stop-timeout 30 --only-summary \
+            > locust.txt 2>&1 || status=$?
+          { kill -TERM "$server" && wait "$server"; } || true # sai pelo SIGTERM relançado (143)
+          cat locust.txt server.txt server.err
+          # `|| true`: sem a linha, o -eo pipefail do passo sairia antes do resumo.
+          sent=$(grep -o 'documentos=[0-9]* chunks=[0-9]*' locust.txt | tail -1 || true)
+          stored=$(grep -o 'documentos=[0-9]* chunks=[0-9]*' server.txt | tail -1 || true)
+          [ -n "$stored" ] && [ "$sent" = "$stored" ] ||
+            { echo "::error::aceitos pelo locust ($sent) ≠ gravados no banco ($stored)"; status=1; }
+          { echo "### $USERS uploads simultâneos por $DURATION"; echo '```'
+            grep -v '/INFO/locust' locust.txt || true; cat server.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

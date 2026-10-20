@@ -1,16 +1,20 @@
-"""Ingestor em lote sem banco; o fluxo com Postgres está em test_integration_ingest.py."""
+"""Ingestor em lote e handler do /index sem banco; com Postgres, test_integration_*.py."""
 
 import os
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from app import ingest
 from app.__main__ import main
+from app.chunking import count_words
+from app.clients import MockEmbeddingClient
+from app.db import Database
 from app.ingest import Indexed, Options, Report, Skip, display, document_id, read_text, scan
 from app.sanitize import sanitize_text
+from app.schemas.mcp import IndexDocumentInput
 from app.settings import get_settings
 
 
@@ -103,3 +107,27 @@ def test_cli_validates_passes_the_options_prints_one_line_per_file_and_fails_if_
         "dry-run, nada gravado; seriam indexados: 1 (2 chunks, 10 tokens); sem mudança: 0; "
         "pulados: 1",
     ]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "reason"),
+    [
+        ("source_uri", "", "source_uri vazio ou com caractere"),
+        ("source_uri", "file:///a" + chr(0) + "b", "source_uri vazio ou com caractere"),
+        ("source_uri", "file:///a" + chr(0x200B), "source_uri vazio ou com caractere"),
+        ("tenant_id", " ", "tenant_id vazio ou com caractere"),
+        ("title", chr(0x200B) + " ", "title vazio depois da limpeza"),
+        ("content", chr(0x200B) + chr(0x202E), "content vazio depois da limpeza"),
+    ],
+)
+async def test_index_handler_refuses_what_passes_the_schema_but_would_not_index(
+    field: str, value: str, reason: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(ingest, "token_counter", lambda model: count_words)
+    db = MagicMock(spec=Database)
+    db.read.side_effect = db.session.side_effect = AssertionError("não devia ir ao banco")
+    index = ingest.index_handler(db, MockEmbeddingClient(dimension=8), model="m")
+    body = {"title": "Guia", "content": "texto", "source_uri": "file:///a.md"} | {field: value}
+    with pytest.raises(ingest.InvalidDocument, match=reason) as info:
+        await index(IndexDocumentInput.model_validate(body))
+    assert (info.value.http_status, info.value.code) == (422, "validation_error")
