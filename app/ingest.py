@@ -7,7 +7,7 @@ por `source_uri`: o id do documento é o SHA-256 do texto e do que muda os chunk
 mudança, não paga embedding (o `CachedEmbeddingClient` não serve: só guarda `embed_query`),
 e o arquivo alterado troca a versão velha, com os chunks pelo CASCADE, na mesma transação.
 Symlink nunca é seguido (laço, arquivo fora da pasta). Falha de embedding ou de banco para a
-execução, e rodar de novo retoma; `dry_run` só lê o banco.
+execução, e rodar de novo retoma; `dry_run` só lê o banco. `index_handler`: o `/api/v1/index`.
 ponytail: um arquivo por vez, texto cru, sem `--prune` (o apagado continua indexado) nem
 `--follow-symlinks` (laço por dispositivo + inode); paralelismo e parsers por extensão depois.
 """
@@ -17,6 +17,8 @@ import hashlib
 import json
 import os
 import stat
+import unicodedata
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from functools import partial
 from pathlib import Path
@@ -25,13 +27,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.chunking import chunk_text
+from app.chunking import TokenCounter, chunk_text
 from app.clients.interfaces import BaseEmbeddingClient
 from app.db import Database
 from app.errors import BrainRouterError
 from app.log import get_logger
 from app.sanitize import sanitize_text
 from app.schemas import Chunk
+from app.schemas.mcp import IndexDocumentInput, IndexDocumentOutput
 from app.storage.bulk import insert_chunks
 from app.tokens import token_counter
 
@@ -42,6 +45,13 @@ FORMAT_VERSION = 1  # suba se o mesmo arquivo passar a gerar outros chunks: rein
 _EXISTING = text(
     "SELECT source_uri, id FROM documents WHERE tenant_id = :tenant AND collection_id = :collection"
 )
+_VERSIONS = text(
+    "SELECT id FROM documents WHERE tenant_id = :tenant AND collection_id = :collection "
+    "AND source_uri = :source_uri"
+)
+# Gravações simultâneas do mesmo `source_uri` deixavam todas as versões (o DELETE de uma não vê
+# o INSERT sem commit da outra); com a trava da transação, a seguinte apaga a anterior.
+_LOCK = text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))")
 _DELETE_OLD = text(
     "DELETE FROM documents WHERE tenant_id = :tenant AND collection_id = :collection "
     "AND source_uri = :source_uri AND id <> :id"
@@ -56,6 +66,13 @@ log = get_logger(__name__)
 
 class Skip(Exception):
     """O arquivo fica de fora; a mensagem é o motivo que vai para o relatório."""
+
+
+class InvalidDocument(BrainRouterError):
+    """Pedido do `POST /api/v1/index` que passa no schema e não indexa: 422 `validation_error`."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message, code="validation_error", http_status=422)
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,14 +184,20 @@ async def _existing(session: AsyncSession, options: Options) -> dict[str, set[st
     return versions
 
 
+async def _versions(session: AsyncSession, params: dict[str, str]) -> set[str]:
+    return set((await (await session.connection()).execute(_VERSIONS, params)).scalars())
+
+
 async def _store(
     db: Database, embedder: BaseEmbeddingClient, chunks: list[Chunk], params: dict[str, str]
 ) -> bool:
     """Vetoriza (fora da transação) e grava; False se a mesma versão já estava gravada."""
     vectors = await embedder.embed_documents([chunk.content for chunk in chunks])
     rows = [c.model_copy(update={"embedding": v}) for c, v in zip(chunks, vectors, strict=True)]
+    key = json.dumps([params["tenant"], params["collection"], params["source_uri"]])
     async with db.session() as session:
         conn = await session.connection()
+        await conn.execute(_LOCK, {"key": key})  # colisão do hash só enfileira à toa
         await conn.execute(_DELETE_OLD, params)
         if (await conn.execute(_INSERT, params)).first() is None:
             return False  # outra execução gravou esta versão depois da leitura inicial
@@ -235,6 +258,60 @@ async def ingest_directory(
         tokens = sum(item.token_count for item in chunks)
         report.indexed.append(Indexed(name, doc_id, len(chunks), tokens))
     return report
+
+
+def _identifier(name: str, value: str) -> str:
+    # Faz parte da identidade da versão: limpar trocaria o documento a que o pedido se refere.
+    # Só o que a limpeza tira é recusado; NFD (nome de arquivo do macOS) passa como veio.
+    if not value.strip() or sanitize_text(value) != unicodedata.normalize("NFC", value):
+        raise InvalidDocument(f"{name} vazio ou com caractere de controle ou invisível")
+    return value
+
+
+def _prepare(
+    content: str, uri: str, options: Options, count: TokenCounter, *, model: str, dim: int
+) -> tuple[str, list[Chunk]]:
+    content = sanitize_text(content)
+    doc_id = document_id(content, uri, options, model=model, dim=dim)
+    size, overlap = options.chunk_size, options.chunk_overlap
+    chunks = chunk_text(
+        content, doc_id, max_tokens=size, overlap_tokens=overlap, count_tokens=count
+    )
+    for chunk in chunks:
+        chunk.metadata["source_uri"] = uri
+    return doc_id, chunks
+
+
+def index_handler(
+    db: Database, embedder: BaseEmbeddingClient, *, model: str, collection_id: str = "default"
+) -> Callable[[IndexDocumentInput], Awaitable[IndexDocumentOutput]]:
+    """O `POST /api/v1/index` (`create_app(index=...)`): o caminho de um arquivo do ingest, com o
+    texto do pedido e o `source_uri` como veio (também no `metadata` dos chunks). A versão já
+    gravada (mesmo texto, tenant, `source_uri` e chunking) não paga embedding: 0 chunks novos."""
+    count = token_counter(model)  # na montagem, uma vez: lê (ou baixa) o arquivo do tiktoken
+    prepare = partial(_prepare, count=count, model=model, dim=embedder.dimension)
+
+    async def index(body: IndexDocumentInput) -> IndexDocumentOutput:
+        uri = _identifier("source_uri", body.source_uri)
+        tenant = _identifier("tenant_id", body.tenant_id)
+        if not (title := sanitize_text(body.title).strip()):
+            raise InvalidDocument("title vazio depois da limpeza")
+        options = Options(tenant, collection_id, body.chunk_size, body.chunk_overlap)
+        doc_id, chunks = await asyncio.to_thread(prepare, body.content, uri, options)
+        if not chunks:
+            raise InvalidDocument("content vazio depois da limpeza")
+        params = {"id": doc_id, "title": title, "source_uri": uri}
+        params |= {"tenant": tenant, "collection": collection_id}
+        same = await db.read(lambda session: _versions(session, params)) == {doc_id}
+        created = 0 if same or not await _store(db, embedder, chunks, params) else len(chunks)
+        if created:
+            log.info("index.stored", document_id=doc_id, chunks=created)
+        message = "indexado" if created else "sem mudança: esta versão já estava indexada"
+        return IndexDocumentOutput(
+            document_id=doc_id, chunks_created=created, success=True, message=message
+        )
+
+    return index
 
 
 def render(report: Report) -> str:

@@ -91,6 +91,13 @@ Contrato, códigos de erro e teto de corpo em [`docs/api-v1.md`](docs/api-v1.md)
 indexação entram por `create_app(search=..., index=...)`; sem elas, as rotas dão 503
 `backend_unavailable`: `uv run uvicorn --factory app.api:create_app --port 8000`.
 
+### Teste de carga da ingestão (locust)
+
+`loadtests/locustfile.py` (comando no docstring; extra `load`) manda uploads simultâneos ao
+`/api/v1/index` de `app/bench/ingest_server.py`. No CI, o workflow `Carga` roda sob demanda e nos
+PRs da ingestão. Com mais uploads simultâneos que `DB_POOL_SIZE`, as conexões de overflow abrem e
+fecham a cada pedido (SCRAM e processo novo no Postgres): dimensione o pool pela concorrência.
+
 ### Contagem de tokens (tiktoken)
 
 `app.tokens` conta tokens com o tiktoken, que baixa o arquivo de cada codificação no
