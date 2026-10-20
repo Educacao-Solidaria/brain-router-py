@@ -5,6 +5,7 @@ As fixtures que as expõem ficam em `conftest.py` (`chunk_factory`, `db_session`
 
 import hashlib
 import itertools
+import json
 import math
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
@@ -80,3 +81,17 @@ async def rollback_session(engine: AsyncEngine) -> AsyncIterator[AsyncSession]:
         finally:
             await session.close()
             await outer.rollback()
+
+
+def events(raw: bytes) -> list[tuple[str, Any]]:
+    """(event, data em JSON) de cada evento do corpo SSE; comentários (`: ping`) ficam de fora."""
+    parsed = []
+    for block in raw.decode().split("\n\n"):
+        fields: dict[str, list[str]] = {}
+        for line in block.split("\n"):
+            if line and not line.startswith(":"):
+                name, _, value = line.partition(": ")
+                fields.setdefault(name, []).append(value)
+        if fields:
+            parsed.append((fields["event"][0], json.loads("\n".join(fields["data"]))))
+    return parsed
