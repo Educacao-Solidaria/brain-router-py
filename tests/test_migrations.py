@@ -13,8 +13,18 @@ from app.schemas import Chunk, Collection, Document
 
 ROOT = Path(__file__).resolve().parents[1]
 # História esperada, da base para a head. Migração nova entra no fim da lista.
-REVISIONS = ["0001_create_extensions", "0002_documents_and_chunks", "0003_fulltext_portuguese"]
-FIRST, TABLES, FULLTEXT = REVISIONS[0], REVISIONS[1], REVISIONS[2]
+REVISIONS = [
+    "0001_create_extensions",
+    "0002_documents_and_chunks",
+    "0003_fulltext_portuguese",
+    "0004_report_indexes",
+]
+FIRST, TABLES, FULLTEXT, REPORTS = REVISIONS
+REPORT_INDEXES = [
+    "ix_chunks_pending_embedding",
+    "ix_chunks_zero_embedding",
+    "ix_documents_collection",
+]
 
 
 def _config() -> tuple[Config, io.StringIO]:
@@ -155,6 +165,31 @@ def test_downgrade_sql_drops_the_indexes_before_the_columns_without_cascade() ->
     positions = [sql.index(step) for step in steps]
     assert positions == sorted(positions)
     assert "CASCADE" not in sql.upper()
+
+
+def _autocommit_block(sql: str) -> list[str]:
+    """Os comandos entre o COMMIT da transação do Alembic e o BEGIN da seguinte."""
+    lines = [line for line in sql.splitlines() if line.strip() and not line.startswith("--")]
+    return lines[lines.index("COMMIT;") + 1 : lines.index("BEGIN;", 1)]
+
+
+def test_upgrade_sql_rebuilds_the_report_indexes_concurrently_outside_a_transaction() -> None:
+    config, buffer = _config()
+    command.upgrade(config, f"{FULLTEXT}:{REPORTS}", sql=True)
+    block = _autocommit_block(buffer.getvalue())  # o CONCURRENTLY não roda em transação
+    # DROP antes de cada CREATE: o índice INVALID de uma execução que falhou é refeito.
+    assert block[0::2] == [f"DROP INDEX CONCURRENTLY IF EXISTS {name};" for name in REPORT_INDEXES]
+    creates = [f"CREATE INDEX CONCURRENTLY {name} ON " for name in REPORT_INDEXES]
+    assert [line[: len(start)] for line, start in zip(block[1::2], creates, strict=True)] == creates
+    assert block[1].endswith(" WHERE embedding IS NULL;")  # os dois parciais
+    assert block[3].endswith(" WHERE vector_norm(embedding) = 0;")
+
+
+def test_downgrade_sql_drops_the_report_indexes_concurrently_in_reverse_order() -> None:
+    config, buffer = _config()
+    command.downgrade(config, f"{REPORTS}:{FULLTEXT}", sql=True)
+    drops = [f"DROP INDEX CONCURRENTLY IF EXISTS {name};" for name in reversed(REPORT_INDEXES)]
+    assert _autocommit_block(buffer.getvalue()) == drops
 
 
 def test_alembic_ini_does_not_carry_a_database_url() -> None:

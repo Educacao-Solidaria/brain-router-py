@@ -36,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--chunk-overlap", type=int, help="tokens de sobreposição (padrão: 50)")
     ingest.add_argument("--max-bytes", type=int, help="teto por arquivo (padrão: 2 MiB)")
     ingest.add_argument("--dry-run", action="store_true", help="só relata, sem embedding")
+    commands.add_parser("report", help="documentos e chunks sem embedding por coleção e tenant")
     return parser
 
 
@@ -102,6 +103,28 @@ def _ingest(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     return 0 if report.failure is None else 1  # 1: parou no meio; rodar de novo retoma
 
 
+def _report() -> int:
+    from app.db import Database
+    from app.log import configure_logging, shutdown_logging
+    from app.reports import Report, render, usage_report
+    from app.settings import get_settings
+
+    async def run() -> Report:
+        db = Database.from_settings(get_settings())
+        try:
+            return await usage_report(db)
+        finally:
+            await db.dispose()
+
+    configure_logging("WARNING", json=False, stream=sys.stderr)  # o stdout é do relatório
+    try:
+        report = asyncio.run(run())
+    finally:
+        shutdown_logging()
+    print(render(report), end="")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -115,6 +138,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _check_integrity(args)
     if args.command == "ingest":
         return _ingest(args, parser)
+    if args.command == "report":
+        return _report()
     return 0
 
 
