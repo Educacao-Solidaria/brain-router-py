@@ -24,11 +24,10 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--fix", action="store_true", help="corrige o que é seguro, numa transação")
     check.add_argument("--min-age-hours", type=float, default=1.0, help="prazo do documento vazio")
     check.add_argument("--max-changes", type=int, default=1000, help="teto de linhas do --fix")
-    # SUPPRESS: a opção não informada fica fora do Namespace e vale o padrão de `Options`.
     ingest = commands.add_parser(
         "ingest",
         help="indexa os .md, .txt e .json de um diretório (recursivo)",
-        argument_default=argparse.SUPPRESS,
+        argument_default=argparse.SUPPRESS,  # a opção não informada vale o padrão de `Options`
     )
     ingest.add_argument("directory", type=Path, help="pasta da documentação")
     ingest.add_argument("--tenant-id", help="tenant dos documentos (padrão: default)")

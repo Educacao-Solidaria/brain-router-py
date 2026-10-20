@@ -71,6 +71,8 @@ class Options:
             raise ValueError(f"chunk_size deve estar em [50, 4000], veio {self.chunk_size}")
         if not 0 <= self.chunk_overlap <= 500:
             raise ValueError(f"chunk_overlap deve estar em [0, 500], veio {self.chunk_overlap}")
+        if self.max_bytes < 1:  # negativo viraria read(-1): o arquivo inteiro na memória
+            raise ValueError(f"max_bytes deve ser >= 1, veio {self.max_bytes}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,13 +109,11 @@ def scan(root: Path, report: Report) -> list[Path]:
         skip(exc.filename or root, f"erro de leitura ({type(exc).__name__})")
 
     for current, dirs, names in os.walk(root, onerror=unreadable):
-        here, kept = Path(current), []
+        here = Path(current)
         for name in sorted(dirs):
             if (here / name).is_symlink():  # o os.walk não entra, mas lista
                 skip(here / name, "symlink")
-            elif not name.startswith("."):
-                kept.append(name)
-        dirs[:] = kept
+        dirs[:] = [d for d in sorted(dirs) if not (d.startswith(".") or (here / d).is_symlink())]
         for name in sorted(names):
             path = here / name
             if name.startswith(".") or path.suffix.lower() not in SUFFIXES:

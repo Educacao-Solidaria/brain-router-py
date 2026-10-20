@@ -81,6 +81,7 @@ def test_cli_validates_passes_the_options_prints_one_line_per_file_and_fails_if_
     for args, message in [
         (["nada"], "não é um diretório: nada"),
         ([".", "--chunk-overlap", "501"], "chunk_overlap deve estar em [0, 500], veio 501"),
+        ([".", "--max-bytes", "-2"], "max_bytes deve ser >= 1, veio -2"),
     ]:
         with pytest.raises(SystemExit) as exit:
             main(["ingest", *args])
