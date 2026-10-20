@@ -39,6 +39,11 @@
 - Corpo limitado a **2 MiB** (`DEFAULT_MAX_BODY_BYTES`): acima, **413 `payload_too_large`**, pelo
   `Content-Length` antes de ler o corpo ou, em chunked, assim que passa do teto.
 - O OpenAPI gerado (`/docs`) declara o envelope abaixo como resposta `4XX`/`5XX` de toda rota.
+- `POST /api/v1/search/stream`: 422 e 503 saem **antes** do stream, como erro HTTP comum. Depois
+  do 200, falha vira `event: error` (mesmo envelope) e o stream acaba sem `done`. Os `result` vêm
+  ordenados por `rank`. Sem evento por 15 s, sai o comentário `: ping` (o cliente ignora linha que
+  começa com `:`), com `Cache-Control: no-cache` e `X-Accel-Buffering: no` (o nginx não segura os
+  eventos). O `data` é JSON numa linha só. Cliente que desconecta cancela a busca no servidor.
 - Códigos de erro que esta API emite:
 
 | status | `code` | quando |
