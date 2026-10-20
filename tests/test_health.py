@@ -94,6 +94,13 @@ async def test_report_is_503_only_when_a_critical_dependency_is_down(
     assert (empty_status, empty.status, empty.checks) == (200, "ok", {})  # sem dependência: de pé
 
 
+async def test_a_raw_check_that_raises_is_down_in_the_report_not_a_500() -> None:
+    probe = Probe()
+    probe.error = True  # sem o CachedCheck por fora
+    status, body = await report({"postgres": Dependency(probe)})
+    assert (status, body.checks) == (503, {"postgres": "down"})
+
+
 @pytest.mark.parametrize(
     ("response", "healthy"),
     [

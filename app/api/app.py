@@ -151,7 +151,7 @@ def create_app(
             log.exception("api.stream_error", path=STREAM_PATH)
             yield ServerSentEvent(event="error", data=error_body(*INTERNAL_ERROR))
 
-    @app.get(HEALTH_PATH)
+    @app.get(HEALTH_PATH, responses={503: {"model": HealthReport}})  # o 503 traz o mesmo corpo
     async def healthz(response: Response) -> HealthReport:
         response.status_code, body = await report(health or {})
         return body

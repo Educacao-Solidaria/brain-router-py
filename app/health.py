@@ -68,9 +68,14 @@ class CachedCheck:
 
 
 async def report(dependencies: Mapping[str, Dependency]) -> tuple[int, HealthReport]:
-    """Roda as checagens em paralelo e devolve (status HTTP, corpo)."""
+    """Roda as checagens em paralelo e devolve (status HTTP, corpo). Checagem crua que levanta
+    (sem o `CachedCheck`) também conta como down, em vez de virar 500."""
     names = list(dependencies)
-    results = await asyncio.gather(*(dependencies[name].check() for name in names))
+    raw = await asyncio.gather(*(dependencies[n].check() for n in names), return_exceptions=True)
+    for name, outcome in zip(names, raw, strict=True):
+        if isinstance(outcome, BaseException):
+            log.warning("health.check_error", dependency=name, error=type(outcome).__name__)
+    results = [outcome is True for outcome in raw]
     pairs = list(zip(names, results, strict=True))
     checks: dict[str, Literal["ok", "down"]] = {n: "ok" if ok else "down" for n, ok in pairs}
     if any(dependencies[name].critical and not ok for name, ok in pairs):
