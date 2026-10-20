@@ -29,6 +29,7 @@ jobs:
     services:
       postgres:
         image: pgvector/pgvector:pg17
+        # Container descartável do job; a senha não é segredo de ambiente nenhum.
         env: { POSTGRES_USER: brain, POSTGRES_PASSWORD: brain-ci, POSTGRES_DB: brain_router_test }
         ports: ["5432:5432"]
         options: >-
