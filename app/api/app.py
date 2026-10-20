@@ -38,6 +38,7 @@ from app.schemas.mcp import (
     IndexDocumentOutput,
 )
 from app.search.fallback import DEGRADED, DEGRADED_HEADER
+from app.tasks import TaskManager
 
 log = get_logger(__name__)
 
@@ -66,11 +67,13 @@ def create_app(
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     cors_origins: Sequence[str] = (),
     rate_limit: RateLimit | None = None,
+    tasks: TaskManager | None = None,
 ) -> FastAPI:
     """Monta a API. Sem argumentos, sobe com as rotas em 503 (útil para smoke test).
 
     `cors_origins`: lista explícita de origens do navegador (sem ela, CORS fica desligado).
     `rate_limit`: desligado por padrão, porque atrás do gateway todo pedido vem do IP dele.
+    `tasks`: as tarefas em segundo plano, canceladas e esperadas quando o servidor desliga.
     """
     if max_body_bytes < 1:
         raise ValueError(f"max_body_bytes deve ser >= 1, veio {max_body_bytes}")
@@ -83,6 +86,7 @@ def create_app(
         summary="API HTTP v1 do RAG híbrido (alternativa ao MCP)",
         exception_handlers=EXCEPTION_HANDLERS,
         responses=ERROR_RESPONSES,
+        lifespan=None if tasks is None else tasks.lifespan,
     )
     # De dentro para fora (o último a entrar fica por fora): teto de corpo, GZip, rate limit,
     # X-Request-Id e CORS. O GZip do Starlette já deixa o text/event-stream de fora.
