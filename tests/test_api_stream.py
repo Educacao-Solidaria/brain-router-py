@@ -9,6 +9,7 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from starlette.types import Message
+from support import events
 
 from app.api import SearchHandler, create_app
 from app.errors.exceptions import EmbeddingServiceError
@@ -30,20 +31,6 @@ def _search(*results: SearchResult) -> SearchHandler:
         )
 
     return search
-
-
-def events(raw: bytes) -> list[tuple[str, Any]]:
-    """(event, data em JSON) de cada evento do corpo SSE; comentários (`: ping`) ficam de fora."""
-    parsed = []
-    for block in raw.decode().split("\n\n"):
-        fields: dict[str, list[str]] = {}
-        for line in block.split("\n"):
-            if line and not line.startswith(":"):
-                name, _, value = line.partition(": ")
-                fields.setdefault(name, []).append(value)
-        if fields:
-            parsed.append((fields["event"][0], json.loads("\n".join(fields["data"]))))
-    return parsed
 
 
 async def post(app: FastAPI, body: dict[str, Any]) -> httpx.Response:
