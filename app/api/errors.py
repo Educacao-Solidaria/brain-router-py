@@ -39,12 +39,25 @@ class ErrorBody(BaseModel):
 ERROR_RESPONSES: dict[int | str, Any] = {"4XX": {"model": ErrorBody}, "5XX": {"model": ErrorBody}}
 
 
+INTERNAL_ERROR = ("internal_error", "erro interno do servidor")
+
+
+def error_body(code: str, message: str) -> dict[str, dict[str, str]]:
+    """O envelope, também no evento `error` do stream SSE."""
+    return {"error": {"code": code, "message": message}}
+
+
 def error_response(
     status: int, code: str, message: str, headers: Mapping[str, str] | None = None
 ) -> JSONResponse:
-    return JSONResponse(
-        {"error": {"code": code, "message": message}}, status_code=status, headers=headers
-    )
+    return JSONResponse(error_body(code, message), status_code=status, headers=headers)
+
+
+def domain_body(exc: BrainRouterError, path: str) -> dict[str, dict[str, str]]:
+    """Envelope do erro de domínio: o código dele em minúsculas e a mensagem; 5xx vai ao log."""
+    if exc.http_status >= 500:
+        log.warning("api.error", code=exc.code, status=exc.http_status, path=path)
+    return error_body(exc.code.lower(), exc.message)
 
 
 def _where(error: Any) -> str:
@@ -72,15 +85,13 @@ async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
 
 
 async def domain_error(request: Request, exc: BrainRouterError) -> JSONResponse:
-    if exc.http_status >= 500:
-        log.warning("api.error", code=exc.code, status=exc.http_status, path=request.url.path)
-    return error_response(exc.http_status, exc.code.lower(), exc.message)
+    return JSONResponse(domain_body(exc, request.url.path), status_code=exc.http_status)
 
 
 async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
     # O ServerErrorMiddleware levanta a exceção de novo depois desta resposta, e o servidor
     # (uvicorn) registra o traceback. O corpo não leva o texto dela: pode ter dado do usuário.
-    return error_response(500, "internal_error", "erro interno do servidor")
+    return error_response(500, *INTERNAL_ERROR)
 
 
 EXCEPTION_HANDLERS: dict[int | type[Exception], Any] = {
