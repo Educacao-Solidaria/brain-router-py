@@ -73,6 +73,15 @@ async def test_a_mid_stream_error_ends_the_stream_with_no_usage_and_no_done(
     assert last["choices"][0]["finish_reason"] == "error" and "usage" not in last
 
 
+def test_line_separators_stay_raw_in_one_data_line_as_in_the_real_api() -> None:
+    separator = chr(0x2028)
+    (frame,) = [
+        f for f in StreamScript(tokens=[f"a{separator}b"]).frames() if separator.encode() in f
+    ]
+    assert frame.decode().count("\n") == 2  # para o SSE, uma linha `data:` só (quebra em CR/LF)
+    assert len(frame.decode().splitlines()) == 3  # o splitlines (e o aiter_lines) parte no U+2028
+
+
 async def test_an_error_before_the_commit_is_a_json_status_and_no_stream() -> None:
     mock = StreamMock(StreamScript(tokens=["x"], status=402, error_message="Insufficient credits"))
     async with httpx.AsyncClient(transport=mock.transport) as http:

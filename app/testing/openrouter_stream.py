@@ -18,6 +18,9 @@ O formato segue a referência atual (https://openrouter.ai/docs/api_reference/st
 Tempo controlável e determinístico: antes de cada evento o stream espera `pace(n)`. O padrão
 (`no_wait`) só cede o event loop; `Gate` solta os eventos quando o teste mandar; qualquer
 `async def pace(n)` serve (`asyncio.sleep(0.05)` para latência de verdade).
+Para quem consome: o texto vai cru no JSON, como na API, inclusive U+2028/U+2029. O SSE só
+quebra linha em CR/LF, mas o `aiter_lines()` do httpx quebra como o `str.splitlines` (nesses
+também): leia o corpo com `aiter_text()` e parta só no LF.
 ponytail: um token = um pedaço de texto (o `completion_tokens` do usage conta pedaços). Se um
 teste precisar da contagem real, passe os pedaços já tokenizados.
 """
