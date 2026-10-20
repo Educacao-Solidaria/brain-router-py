@@ -9,7 +9,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Annotated
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from starlette.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
@@ -37,6 +37,7 @@ from app.schemas.mcp import (
     IndexDocumentInput,
     IndexDocumentOutput,
 )
+from app.search.fallback import DEGRADED, DEGRADED_HEADER
 
 log = get_logger(__name__)
 
@@ -96,7 +97,7 @@ def create_app(
             allow_origins=list(cors_origins),
             allow_methods=["GET", "POST"],
             allow_headers=["Content-Type", REQUEST_ID_HEADER],
-            expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
+            expose_headers=[REQUEST_ID_HEADER, "Retry-After", DEGRADED_HEADER],
         )  # sem allow_credentials: a API não usa cookie nem sessão
 
     def search_backend() -> SearchHandler:
@@ -108,8 +109,17 @@ def create_app(
     Search = Annotated[SearchHandler, Depends(search_backend)]
 
     @app.post("/api/v1/search")
-    async def search_route(body: HybridSearchInput, handler: Search) -> HybridSearchOutput:
-        return await handler(body)
+    async def search_route(
+        body: HybridSearchInput, handler: Search, response: Response
+    ) -> HybridSearchOutput:
+        mark = DEGRADED.set(None)  # o pedido começa sem marca, mesmo num contexto reaproveitado
+        try:
+            output = await handler(body)
+            if (mode := DEGRADED.get()) is not None:  # busca degradada (app.search.fallback)
+                response.headers[DEGRADED_HEADER] = mode
+            return output
+        finally:
+            DEGRADED.reset(mark)
 
     @app.post(STREAM_PATH, response_class=EventSourceResponse)
     async def search_stream_route(
