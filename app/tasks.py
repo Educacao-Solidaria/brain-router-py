@@ -61,9 +61,10 @@ class TaskManager:
     def submit(self, name: str, job: Callable[[], Awaitable[object]]) -> TaskInfo:
         if self._closed:
             raise RuntimeError("TaskManager encerrado: não aceita tarefa nova")
+        loop = asyncio.get_running_loop()  # fora do loop, falha aqui: antes de registrar nada
         info = TaskInfo(id=uuid.uuid4().hex, name=name, created_at=datetime.now(UTC))
+        self._tasks[info.id] = loop.create_task(self._run(info, job), name=f"task:{name}")
         self._info[info.id] = info
-        self._tasks[info.id] = asyncio.create_task(self._run(info, job), name=f"task:{name}")
         return replace(info)
 
     def get(self, task_id: str) -> TaskInfo | None:

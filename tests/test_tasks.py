@@ -107,6 +107,13 @@ async def test_the_app_lifespan_cancels_and_awaits_the_jobs_on_shutdown() -> Non
         manager.submit("depois", asyncio.Event().wait)
 
 
+def test_submit_outside_the_event_loop_fails_without_leaving_a_phantom_task() -> None:
+    manager = TaskManager()
+    with pytest.raises(RuntimeError, match="no running event loop"):
+        manager.submit("fora do loop", asyncio.Event().wait)
+    assert manager.list() == []
+
+
 async def test_keeps_only_the_latest_finished_and_refuses_degenerate_settings() -> None:
     manager = TaskManager(keep_finished=1)
 
