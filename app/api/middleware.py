@@ -19,6 +19,7 @@ from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.errors import INTERNAL_ERROR, error_response
+from app.health import HEALTH_PATH
 from app.log import get_logger
 
 log = get_logger(__name__)
@@ -121,7 +122,8 @@ class RateLimitMiddleware:
         self._buckets: OrderedDict[str, tuple[float, float]] = OrderedDict()  # fichas, quando
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        # A sonda de saúde não conta: o resultado dela tem cache curto (app.health).
+        if scope["type"] != "http" or scope.get("path") == HEALTH_PATH:
             await self.app(scope, receive, send)
             return
         wait = self._take(self._client(scope))

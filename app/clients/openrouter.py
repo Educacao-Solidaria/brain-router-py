@@ -154,6 +154,22 @@ class OpenRouterEmbeddingClient(BaseEmbeddingClient):
             vectors.extend(await self._embed_batch(texts[start : start + self._batch_size]))
         return vectors
 
+    async def check_key(self, timeout: float = 5.0) -> bool:
+        """Sonda do healthcheck: `GET /key`, metadado da chave, que não gasta crédito.
+
+        True com a chave aceita e crédito sobrando (`limit_remaining` nulo = sem teto). Erro de
+        rede ou corpo que não é JSON levanta (o `CachedCheck` de `app.health` conta como down).
+        """
+        response = await self._http.get("/key", timeout=timeout)
+        if not response.is_success:
+            log.warning("openrouter.key_check", status=response.status_code)
+            return False
+        body = response.json()
+        data = body.get("data") if isinstance(body, dict) else None
+        remaining = data.get("limit_remaining") if isinstance(data, dict) else None
+        # Número <= 0: o crédito acabou, e o embedding falharia (402) mesmo com a rede de pé.
+        return not (isinstance(remaining, int | float) and remaining <= 0)
+
     async def aclose(self) -> None:
         await self._http.aclose()
 

@@ -6,7 +6,7 @@ saída). Sem handler, a rota responde 503 `backend_unavailable`, nunca uma lista
 """
 
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, Response
@@ -30,6 +30,7 @@ from app.api.middleware import (
     RequestIdMiddleware,
 )
 from app.errors.exceptions import BrainRouterError
+from app.health import HEALTH_PATH, Dependency, HealthReport, report
 from app.log import get_logger
 from app.schemas.mcp import (
     HybridSearchInput,
@@ -68,12 +69,14 @@ def create_app(
     cors_origins: Sequence[str] = (),
     rate_limit: RateLimit | None = None,
     tasks: TaskManager | None = None,
+    health: Mapping[str, Dependency] | None = None,
 ) -> FastAPI:
     """Monta a API. Sem argumentos, sobe com as rotas em 503 (útil para smoke test).
 
     `cors_origins`: lista explícita de origens do navegador (sem ela, CORS fica desligado).
     `rate_limit`: desligado por padrão, porque atrás do gateway todo pedido vem do IP dele.
     `tasks`: as tarefas em segundo plano, canceladas e esperadas quando o servidor desliga.
+    `health`: as dependências do `GET /healthz`; sem elas, 200 `ok` (o processo está de pé).
     """
     if max_body_bytes < 1:
         raise ValueError(f"max_body_bytes deve ser >= 1, veio {max_body_bytes}")
@@ -147,6 +150,11 @@ def create_app(
         except Exception:  # sem traceback no corpo; vai para o log, que o servidor não verá
             log.exception("api.stream_error", path=STREAM_PATH)
             yield ServerSentEvent(event="error", data=error_body(*INTERNAL_ERROR))
+
+    @app.get(HEALTH_PATH)
+    async def healthz(response: Response) -> HealthReport:
+        response.status_code, body = await report(health or {})
+        return body
 
     @app.post("/api/v1/index", status_code=201)
     async def index_route(body: IndexDocumentInput) -> IndexDocumentOutput:

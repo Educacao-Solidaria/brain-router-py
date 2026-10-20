@@ -53,6 +53,10 @@
 - CORS só para origens listadas (`create_app(cors_origins=[...])`), sem credenciais; preflight de
   origem fora da lista é o 400 em texto do Starlette (o navegador não mostra o corpo).
 - GZip em resposta de 1000 bytes ou mais, quando o cliente aceita; nunca no `text/event-stream`.
+- `GET /healthz` (`app/health.py`): `{"status": "ok"|"degraded"|"unavailable", "checks":
+  {"<dependência>": "ok"|"down"}}`, sem host, versão nem mensagem de erro. 503 só quando cai uma
+  dependência crítica (o Postgres); a OpenRouter fora dá 200 `degraded` (há o fallback léxico).
+  Cada checagem tem cache de alguns segundos e a rota fica fora do rate limit.
 - Busca degradada (`app/search/fallback.py`): sem o provedor de embeddings, `POST /api/v1/search`
   responde só com a busca léxica, no mesmo schema, e com o header `X-Search-Degraded: lexical`
   (exposto no CORS). No stream o header já saiu quando a busca roda: o sinal fica no log e na métrica.
