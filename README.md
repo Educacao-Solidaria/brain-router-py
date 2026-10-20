@@ -60,6 +60,7 @@ teste (`tests/test_tooling.py`) falha se os dois divergirem.
 |---|---|
 | `uv run brain-router --version` | CLI do pacote (entry point `app.__main__:main`) |
 | `uv run brain-router check-integrity [--fix]` | audita documentos e vetores do banco de `DATABASE_URL`; só leitura sem `--fix` (`app/integrity.py`) |
+| `uv run brain-router ingest <pasta> [--dry-run]` | indexa os `.md`/`.txt`/`.json` da pasta, idempotente por `source_uri`; `--dry-run` só relata (`app/ingest.py`) |
 | `uv run pre-commit run --all-files` | todos os hooks sobre o repositório inteiro |
 | `uv add <pacote>` / `uv add --optional dev <pacote>` | nova dependência, já atualizando o `uv.lock` |
 | `uv run alembic upgrade head` | aplica as migrações (lê `DATABASE_URL`; nada de URL no `alembic.ini`) |
