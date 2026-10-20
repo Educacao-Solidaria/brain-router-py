@@ -82,6 +82,13 @@ docker compose down -v           # descarta o volume
 
 Sem `DATABASE_URL` os testes de integração falham em vez de pular — de propósito.
 
+### API HTTP v1 (FastAPI)
+
+Alternativa ao MCP para o gateway e o studio (`POST /api/v1/search` e `/api/v1/index`).
+Contrato, códigos de erro e teto de corpo em [`docs/api-v1.md`](docs/api-v1.md). A busca e a
+indexação entram por `create_app(search=..., index=...)`; sem elas, as rotas dão 503
+`backend_unavailable`: `uv run uvicorn --factory app.api:create_app --port 8000`.
+
 ### Contagem de tokens (tiktoken)
 
 `app.tokens` conta tokens com o tiktoken, que baixa o arquivo de cada codificação no
