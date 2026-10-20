@@ -5,11 +5,14 @@ tools MCP `hybrid_search` e `index_document` (schema de entrada do `app.schemas.
 saída). Sem handler, a rota responde 503 `backend_unavailable`, nunca uma lista vazia.
 """
 
-from collections.abc import AsyncIterator, Awaitable, Callable
+import re
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from typing import Annotated
 
 from fastapi import Depends, FastAPI
 from fastapi.sse import EventSourceResponse, ServerSentEvent
+from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from app import __version__
 from app.api.errors import (
@@ -19,6 +22,12 @@ from app.api.errors import (
     BodyLimitMiddleware,
     domain_body,
     error_body,
+)
+from app.api.middleware import (
+    REQUEST_ID_HEADER,
+    RateLimit,
+    RateLimitMiddleware,
+    RequestIdMiddleware,
 )
 from app.errors.exceptions import BrainRouterError
 from app.log import get_logger
@@ -37,6 +46,7 @@ IndexHandler = Callable[[IndexDocumentInput], Awaitable[IndexDocumentOutput]]
 # 2 MiB: um documento de texto grande inteiro no `content` do /index, com folga para o JSON.
 DEFAULT_MAX_BODY_BYTES = 2 * 1024 * 1024
 STREAM_PATH = "/api/v1/search/stream"
+_ORIGIN = re.compile(r"https?://[^/\s]+")  # esquema e host[:porta], como o header Origin
 
 
 class BackendUnavailableError(BrainRouterError):
@@ -53,10 +63,19 @@ def create_app(
     search: SearchHandler | None = None,
     index: IndexHandler | None = None,
     max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
+    cors_origins: Sequence[str] = (),
+    rate_limit: RateLimit | None = None,
 ) -> FastAPI:
-    """Monta a API. Sem argumentos, sobe com as rotas em 503 (útil para smoke test)."""
+    """Monta a API. Sem argumentos, sobe com as rotas em 503 (útil para smoke test).
+
+    `cors_origins`: lista explícita de origens do navegador (sem ela, CORS fica desligado).
+    `rate_limit`: desligado por padrão, porque atrás do gateway todo pedido vem do IP dele.
+    """
     if max_body_bytes < 1:
         raise ValueError(f"max_body_bytes deve ser >= 1, veio {max_body_bytes}")
+    for origin in cors_origins:
+        if not _ORIGIN.fullmatch(origin):  # recusa "*", caminho e barra no fim
+            raise ValueError(f"origem de CORS inválida: {origin!r}")
     app = FastAPI(
         title="brain-router-py",
         version=__version__,
@@ -64,7 +83,21 @@ def create_app(
         exception_handlers=EXCEPTION_HANDLERS,
         responses=ERROR_RESPONSES,
     )
+    # De dentro para fora (o último a entrar fica por fora): teto de corpo, GZip, rate limit,
+    # X-Request-Id e CORS. O GZip do Starlette já deixa o text/event-stream de fora.
     app.add_middleware(BodyLimitMiddleware, max_bytes=max_body_bytes)
+    app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
+    if rate_limit is not None:
+        app.add_middleware(RateLimitMiddleware, limit=rate_limit)
+    app.add_middleware(RequestIdMiddleware)
+    if cors_origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=list(cors_origins),
+            allow_methods=["GET", "POST"],
+            allow_headers=["Content-Type", REQUEST_ID_HEADER],
+            expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
+        )  # sem allow_credentials: a API não usa cookie nem sessão
 
     def search_backend() -> SearchHandler:
         # Dependência roda antes de a resposta começar: no stream, o 503 ainda sai como erro HTTP.

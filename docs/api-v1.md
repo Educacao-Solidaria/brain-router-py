@@ -44,6 +44,15 @@
   ordenados por `rank`. Sem evento por 15 s, sai o comentário `: ping` (o cliente ignora linha que
   começa com `:`), com `Cache-Control: no-cache` e `X-Accel-Buffering: no` (o nginx não segura os
   eventos). O `data` é JSON numa linha só. Cliente que desconecta cancela a busca no servidor.
+- `X-Request-Id`: aceito se casar `[A-Za-z0-9._:-]{1,128}` (a regra do flow-gateway-go); senão,
+  um novo (32 hex). Volta em toda resposta, inclusive 413, 429 e 500, e vai como `request_id` em
+  toda linha de log do pedido.
+- Rate limit (desligado por padrão: atrás do gateway, todo pedido vem do IP dele): token bucket
+  por IP (IPv6 por /64), **429 `rate_limited`** com `Retry-After` em segundos. O
+  `X-Forwarded-For` só conta quando a conexão vem de um proxy configurado como confiável.
+- CORS só para origens listadas (`create_app(cors_origins=[...])`), sem credenciais; preflight de
+  origem fora da lista é o 400 em texto do Starlette (o navegador não mostra o corpo).
+- GZip em resposta de 1000 bytes ou mais, quando o cliente aceita; nunca no `text/event-stream`.
 - Códigos de erro que esta API emite:
 
 | status | `code` | quando |
@@ -53,6 +62,7 @@
 | 405 | `method_not_allowed` | método errado na rota (com o header `Allow`) |
 | 413 | `payload_too_large` | corpo acima do teto |
 | 422 | `validation_error` | JSON inválido ou fora do schema; a mensagem diz campo e regra (até 5), nunca o valor recebido |
+| 429 | `rate_limited` | cliente acima do limite (com `Retry-After`) |
 | 503 | `backend_unavailable` | busca ou indexação não configurada neste servidor |
 | 500 | `internal_error` | erro inesperado; o texto da exceção fica só no log do servidor |
 | do erro | `code` do `BrainRouterError` em minúsculas | erro de domínio (ex.: 502 `embedding_service_error`) |

@@ -89,8 +89,9 @@ async def domain_error(request: Request, exc: BrainRouterError) -> JSONResponse:
 
 
 async def unexpected_error(request: Request, exc: Exception) -> JSONResponse:
-    # O ServerErrorMiddleware levanta a exceção de novo depois desta resposta, e o servidor
-    # (uvicorn) registra o traceback. O corpo não leva o texto dela: pode ter dado do usuário.
+    # Rede de segurança: o RequestIdMiddleware já responde o 500 por dentro. O que chegar aqui o
+    # ServerErrorMiddleware levanta de novo, e o servidor registra o traceback. O corpo nunca
+    # leva o texto da exceção: pode ter dado do usuário.
     return error_response(500, *INTERNAL_ERROR)
 
 
