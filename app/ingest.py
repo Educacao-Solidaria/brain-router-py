@@ -12,6 +12,7 @@ ponytail: um arquivo por vez, texto cru, sem `--prune` (o apagado continua index
 `--follow-symlinks` (laço por dispositivo + inode); paralelismo e parsers por extensão depois.
 """
 
+import asyncio
 import hashlib
 import json
 import os
@@ -145,6 +146,10 @@ def read_text(path: Path, options: Options) -> str:
         raise Skip(f"UTF-8 inválido (byte {exc.start})") from None
 
 
+def _load(path: Path, options: Options) -> str:
+    return sanitize_text(read_text(path, options))
+
+
 def document_id(content: str, source_uri: str, options: Options, *, model: str, dim: int) -> str:
     """Id da versão: o mesmo enquanto o texto e o que muda os chunks forem os mesmos."""
     key = [FORMAT_VERSION, options.tenant_id, options.collection_id, source_uri]
@@ -186,16 +191,19 @@ async def ingest_directory(
     options: Options = Options(),  # noqa: B008 (imutável)
 ) -> Report:
     """Indexa os arquivos de `root` conforme `options` e devolve o relatório."""
+    # Arquivo e CPU síncronos vão por to_thread: rodando como tarefa no servidor (app.tasks),
+    # a ingestão não trava o event loop das requisições.
     root = root.resolve(strict=True)
-    size, overlap, count = options.chunk_size, options.chunk_overlap, token_counter(model)
+    count = await asyncio.to_thread(token_counter, model)  # pode ler (ou baixar) o tiktoken
+    size, overlap = options.chunk_size, options.chunk_overlap
     chunk = partial(chunk_text, max_tokens=size, overlap_tokens=overlap, count_tokens=count)
     report = Report(options.dry_run)
-    files = scan(root, report)
+    files = await asyncio.to_thread(scan, root, report)
     existing = await db.read(lambda session: _existing(session, options))
     for path in files:
         name = display(path.relative_to(root).as_posix())
         try:
-            content = sanitize_text(read_text(path, options))
+            content = await asyncio.to_thread(_load, path, options)
         except Skip as exc:
             report.skipped.append((name, str(exc)))
             continue
@@ -204,7 +212,7 @@ async def ingest_directory(
         if existing.get(uri) == {doc_id}:
             report.unchanged += 1
             continue
-        if not (chunks := chunk(content, doc_id)):
+        if not (chunks := await asyncio.to_thread(chunk, content, doc_id)):
             report.skipped.append((name, "vazio"))
             continue
         for item in chunks:
