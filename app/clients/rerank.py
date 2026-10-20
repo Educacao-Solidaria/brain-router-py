@@ -8,14 +8,15 @@ inteiro, dentro da faixa e sem repetir, score finito, pelo menos um resultado po
 
 - `rerank` não levanta por falha do serviço: HTTP de erro, rede, timeout e resposta fora do
   formato devolvem os `top_n` primeiros **na ordem de entrada**, com `rrf_score` 0.0, e um
-  `rerank.fallback` no log (o motivo, sem query nem conteúdo). Quem preferir tratar a falha usa
-  `rank`, que levanta `RerankServiceError`.
+  `rerank.fallback` no log (status e mensagem de erro da API, nunca a query nem o conteúdo
+  enviados). Quem preferir tratar a falha usa `rank`, que levanta `RerankServiceError`.
 - Todo pedido vai com `provider.data_collection = "deny"`: política da casa, sem parâmetro.
 - O score do reranker sai em `rrf_score` (o campo que ordena o `SearchResult`, como no
   `MockRerankerClient`); `dense_score` e `sparse_score` ficam `None`, porque o contrato só entrega
   o `Chunk`. Quem precisar dos scores da busca cruza pelo `chunk.id`.
 """
 
+import asyncio
 from typing import Annotated, Any, Self
 
 import httpx
@@ -66,6 +67,7 @@ class OpenRouterRerankerClient(BaseRerankerClient):
         if not timeout > 0:  # recusa também NaN
             raise ValueError(f"timeout deve ser > 0, veio {timeout}")
         self._model = model
+        self._timeout = timeout
         self._http = httpx.AsyncClient(
             base_url=base_url,
             headers={"Authorization": f"Bearer {api_key.get_secret_value()}"},
@@ -142,8 +144,10 @@ class OpenRouterRerankerClient(BaseRerankerClient):
     @timed("rerank.openrouter")
     async def _post(self, payload: dict[str, Any]) -> httpx.Response:
         try:
-            response = await self._http.post("/rerank", json=payload)
-        except httpx.HTTPError as exc:  # timeout, conexão recusada, DNS, TLS
+            # O timeout do httpx vale por fase (conectar, cada leitura): o prazo total é este.
+            async with asyncio.timeout(self._timeout):
+                response = await self._http.post("/rerank", json=payload)
+        except (httpx.HTTPError, TimeoutError) as exc:  # prazo, conexão recusada, DNS, TLS
             raise RerankServiceError(type(exc).__name__) from exc
         if not response.is_success:
             raise RerankServiceError(f"HTTP {response.status_code}: {_error_detail(response)}")

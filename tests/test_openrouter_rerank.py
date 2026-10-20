@@ -217,6 +217,18 @@ async def test_contract_repr_and_closing() -> None:
     assert client._http.is_closed
 
 
+async def test_the_timeout_bounds_the_whole_request_not_each_read() -> None:
+    async def drip(request: httpx.Request) -> httpx.Response:
+        await asyncio.sleep(3600)  # o MockTransport não aplica o timeout do httpx
+        raise AssertionError("não devia acordar")
+
+    transport = httpx.MockTransport(drip)
+    client = OpenRouterRerankerClient(SecretStr(KEY), timeout=0.05, transport=transport)
+    results = await asyncio.wait_for(client.rerank(QUERY, _chunks(2), top_n=1), timeout=10)
+
+    assert [(r.chunk.id, r.rrf_score) for r in results] == [("doc-1:0", 0.0)]
+
+
 @pytest.mark.parametrize("timeout", [0.0, -1.0, float("nan")])
 def test_invalid_timeout_is_refused(timeout: float) -> None:
     with pytest.raises(ValueError, match="timeout"):
