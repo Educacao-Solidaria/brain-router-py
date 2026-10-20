@@ -137,7 +137,7 @@ async def test_fallback_answers_lexically_marks_it_and_never_masks_other_errors(
     search = LexicalFallback(down, text_search_handler(store))
     output = await search(HybridSearchInput(query="matrícula"))
     assert [result.chunk.id for result in output.results] == ["c0"] and output.total_found == 1
-    assert output.execution_time_ms >= 20
+    assert output.execution_time_ms >= 19  # piso, com folga do relógio do loop
     assert DEGRADED.get() == "lexical" and get_stats("search.degraded").calls == calls + 1
     with pytest.raises(EmbeddingServiceError, match="tenant_id"):  # sem filtro, sem fallback
         await search(HybridSearchInput(query="matrícula", tenant_id="outro"))
