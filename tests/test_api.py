@@ -74,10 +74,9 @@ async def test_search_passes_the_parsed_input_and_returns_the_output() -> None:
     body = response.json()
     assert (body["query"], body["total_found"], body["execution_time_ms"]) == ("matrícula", 1, 1.5)
     (result,) = body["results"]
-    assert result["chunk"]["id"] == "doc-1:0"
-    assert result["chunk"]["content"] == "Matrícula em março."
-    assert (result["dense_score"], result["sparse_score"]) == (0.9, None)
-    assert (result["rrf_score"], result["rank"]) == (0.0325, 1)
+    assert (result["chunk"]["id"], result["chunk"]["content"]) == ("doc-1:0", "Matrícula em março.")
+    scores = [result[k] for k in ("dense_score", "sparse_score", "rrf_score", "rank")]
+    assert scores == [0.9, None, 0.0325, 1]
     (received,) = backend.searches
     assert (received.query, received.top_k, received.alpha) == ("matrícula", 3, 0.5)
     assert (received.tenant_id, received.filter_metadata) == (None, None)
@@ -109,11 +108,12 @@ async def test_missing_backend_is_503_not_an_empty_result(path: str, body: dict[
     [
         ({"query": ""}, "query"),
         ({"top_k": 3}, "query"),
-        ({"query": "x", "top_k": 0}, "top_k"),
-        ({"query": "x", "top_k": 51}, "top_k"),
-        ({"query": "x", "alpha": 1.01}, "alpha"),
-        ({"query": "x", "alpha": "NaN"}, "alpha"),
-        ({"query": "x", "filter_metadata": []}, "filter_metadata"),
+        ({"query": "cpf 123", "top_k": 0}, "top_k"),
+        ({"query": "cpf 123", "top_k": 51}, "top_k"),
+        ({"query": "cpf 123", "top_k": "muitos"}, "top_k"),
+        ({"query": "cpf 123", "alpha": 1.01}, "alpha"),
+        ({"query": "cpf 123", "alpha": "NaN"}, "alpha"),
+        ({"query": "cpf 123", "filter_metadata": []}, "filter_metadata"),
     ],
 )
 async def test_invalid_search_is_422_validation_error(body: dict[str, Any], field: str) -> None:
@@ -125,16 +125,14 @@ async def test_invalid_search_is_422_validation_error(body: dict[str, Any], fiel
     error = error_of(response)
     assert error["code"] == "validation_error"
     assert error["message"].startswith(f"{field}: ")
+    assert "cpf" not in error["message"] and "muitos" not in error["message"]  # sem o valor
     assert backend.searches == []
 
 
-async def test_validation_message_does_not_echo_the_values() -> None:
-    async with client(Backend().app()) as http:
-        response = await http.post(SEARCH, json={"query": "cpf 123", "top_k": "muitos"})
-
-    message = error_of(response)["message"]
-    assert message.startswith("top_k: ")
-    assert "cpf" not in message and "muitos" not in message
+def test_openapi_documents_the_envelope_instead_of_the_fastapi_422() -> None:
+    responses = create_app().openapi()["paths"][SEARCH]["post"]["responses"]
+    refs = {responses[k]["content"]["application/json"]["schema"]["$ref"] for k in ("4XX", "5XX")}
+    assert "422" not in responses and refs == {"#/components/schemas/ErrorBody"}
 
 
 async def test_validation_message_lists_at_most_five_errors() -> None:
@@ -147,19 +145,20 @@ async def test_validation_message_lists_at_most_five_errors() -> None:
 
 
 @pytest.mark.parametrize(
-    ("raw", "status", "code", "text"),
+    ("raw", "headers", "status", "code", "text"),
     [
-        (b'{"query": ', 422, "validation_error", "JSON inválido"),
-        (b"[1, 2", 422, "validation_error", "JSON inválido"),
-        (b'{"query": "x", "alpha": NaN}', 422, "validation_error", "alpha: "),  # json.loads aceita
-        (b"\xff", 400, "bad_request", "parsing the body"),  # UTF-8 inválido: o FastAPI dá 400
+        (b'{"query": ', JSON, 422, "validation_error", "JSON inválido"),
+        (b"[1, 2", JSON, 422, "validation_error", "JSON inválido"),
+        (b'{"query": "x", "alpha": NaN}', JSON, 422, "validation_error", "alpha: "),  # json.loads
+        (b"\xff", JSON, 400, "bad_request", "parsing the body"),  # UTF-8 inválido: FastAPI dá 400
+        (b'{"query": "x"}', {}, 422, "validation_error", "corpo: "),  # sem Content-Type: não lê
     ],
 )
 async def test_malformed_body_uses_the_envelope(
-    raw: bytes, status: int, code: str, text: str
+    raw: bytes, headers: dict[str, str], status: int, code: str, text: str
 ) -> None:
     async with client(Backend().app()) as http:
-        response = await http.post(SEARCH, content=raw, headers=JSON)
+        response = await http.post(SEARCH, content=raw, headers=headers)
 
     assert response.status_code == status
     error = error_of(response)
@@ -218,21 +217,17 @@ async def test_unknown_route_and_wrong_method_use_the_envelope() -> None:
     assert wrong.headers["allow"] == "POST"
 
 
-async def test_domain_error_keeps_its_status_and_code() -> None:
-    backend = Backend(EmbeddingServiceError("HTTP 429 depois de 4 tentativas"))
-    async with client(backend.app()) as http:
+@pytest.mark.parametrize(
+    ("error", "status", "code", "shown"),
+    [
+        (EmbeddingServiceError("HTTP 429 senha=hunter2"), 502, "embedding_service_error", True),
+        (RuntimeError("HTTP 429 senha=hunter2"), 500, "internal_error", False),
+    ],
+)
+async def test_handler_errors(error: Exception, status: int, code: str, shown: bool) -> None:
+    # O erro de domínio leva status, código e mensagem; o inesperado não mostra o texto.
+    async with client(Backend(error).app(), raise_app_exceptions=False) as http:
         response = await http.post(SEARCH, json={"query": "x"})
 
-    assert response.status_code == 502
-    error = error_of(response)
-    assert error["code"] == "embedding_service_error" and "HTTP 429" in error["message"]
-
-
-async def test_unexpected_error_is_500_without_the_exception_text() -> None:
-    backend = Backend(RuntimeError("senha=hunter2"))
-    async with client(backend.app(), raise_app_exceptions=False) as http:
-        response = await http.post(SEARCH, json={"query": "x"})
-
-    assert response.status_code == 500
-    assert error_of(response)["code"] == "internal_error"
-    assert "hunter2" not in response.text
+    assert (response.status_code, error_of(response)["code"]) == (status, code)
+    assert ("hunter2" in error_of(response)["message"]) is shown

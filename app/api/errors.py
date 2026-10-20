@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from starlette.datastructures import Headers
 from starlette.exceptions import HTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -22,12 +23,20 @@ log = get_logger(__name__)
 
 # Acima disso, a mensagem de validação diz só quantos erros sobraram.
 MAX_VALIDATION_ERRORS = 5
-_HTTP_CODES = {
-    400: "bad_request",
-    404: "not_found",
-    405: "method_not_allowed",
-    413: "payload_too_large",
-}
+_CODES = {400: "bad_request", 404: "not_found", 405: "method_not_allowed", 413: "payload_too_large"}
+
+
+class ErrorDetail(BaseModel):
+    code: str
+    message: str
+
+
+class ErrorBody(BaseModel):
+    error: ErrorDetail
+
+
+# No OpenAPI de toda rota: sem isso, o 422 apareceria no formato do FastAPI ({"detail": [...]}).
+ERROR_RESPONSES: dict[int | str, Any] = {"4XX": {"model": ErrorBody}, "5XX": {"model": ErrorBody}}
 
 
 def error_response(
@@ -58,7 +67,7 @@ async def validation_error(request: Request, exc: RequestValidationError) -> JSO
 
 
 async def http_error(request: Request, exc: HTTPException) -> JSONResponse:
-    code = _HTTP_CODES.get(exc.status_code, f"http_{exc.status_code}")
+    code = _CODES.get(exc.status_code, f"http_{exc.status_code}")
     return error_response(exc.status_code, code, str(exc.detail), exc.headers)
 
 

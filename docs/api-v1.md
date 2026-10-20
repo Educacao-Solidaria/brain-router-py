@@ -32,12 +32,13 @@
 
 ## Detalhes desta implementação (não mudam o contrato)
 
-- Código: `app/api/` (`create_app`). Busca e indexação entram por injeção
-  (`create_app(search=..., index=...)`), com a mesma forma dos handlers das tools MCP
-  `hybrid_search` e `index_document`. Rota sem handler responde **503 `backend_unavailable`**.
-- Corpo do pedido limitado a **2 MiB** (`DEFAULT_MAX_BODY_BYTES`, ajustável no `create_app`):
-  acima disso, **413 `payload_too_large`**, recusado pelo `Content-Length` antes de ler o corpo
-  ou, sem ele (chunked), assim que passa do teto.
+- Código em `app/api/`: busca e indexação entram por `create_app(search=..., index=...)`, com a
+  forma dos handlers das tools MCP; rota sem handler responde **503 `backend_unavailable`**.
+- **`Content-Type: application/json` é obrigatório**: sem ele (ou com o form do `curl -d`), o
+  FastAPI não lê o corpo como JSON (proteção contra CSRF) e a resposta é 422.
+- Corpo limitado a **2 MiB** (`DEFAULT_MAX_BODY_BYTES`): acima, **413 `payload_too_large`**, pelo
+  `Content-Length` antes de ler o corpo ou, em chunked, assim que passa do teto.
+- O OpenAPI gerado (`/docs`) declara o envelope abaixo como resposta `4XX`/`5XX` de toda rota.
 - Códigos de erro que esta API emite:
 
 | status | `code` | quando |
@@ -51,5 +52,4 @@
 | 500 | `internal_error` | erro inesperado; o texto da exceção fica só no log do servidor |
 | do erro | `code` do `BrainRouterError` em minúsculas | erro de domínio (ex.: 502 `embedding_service_error`) |
 
-- Sem autenticação: é serviço interno, atrás do gateway. Não exponha a porta fora da rede
-  privada.
+- Sem autenticação: serviço interno, atrás do gateway. Não exponha a porta fora da rede privada.

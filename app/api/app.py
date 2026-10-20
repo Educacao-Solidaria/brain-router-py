@@ -1,9 +1,8 @@
 """Aplicação FastAPI da API HTTP v1: `POST /api/v1/search` e `POST /api/v1/index`.
 
-Busca e indexação entram por injeção, `create_app(search=..., index=...)`: são handlers com a
-mesma forma dos que as tools `hybrid_search` e `index_document` do MCP registram (recebem o
-schema de entrada do `app.schemas.mcp` e devolvem o de saída). Sem o handler, a rota responde
-503 `backend_unavailable`, nunca uma lista vazia que pareça "nada encontrado".
+Busca e indexação entram por `create_app(search=..., index=...)`, com a forma dos handlers das
+tools MCP `hybrid_search` e `index_document` (schema de entrada do `app.schemas.mcp` → o de
+saída). Sem handler, a rota responde 503 `backend_unavailable`, nunca uma lista vazia.
 """
 
 from collections.abc import Awaitable, Callable
@@ -11,7 +10,7 @@ from collections.abc import Awaitable, Callable
 from fastapi import FastAPI
 
 from app import __version__
-from app.api.errors import EXCEPTION_HANDLERS, BodyLimitMiddleware
+from app.api.errors import ERROR_RESPONSES, EXCEPTION_HANDLERS, BodyLimitMiddleware
 from app.errors.exceptions import BrainRouterError
 from app.schemas.mcp import (
     HybridSearchInput,
@@ -50,6 +49,7 @@ def create_app(
         version=__version__,
         summary="API HTTP v1 do RAG híbrido (alternativa ao MCP)",
         exception_handlers=EXCEPTION_HANDLERS,
+        responses=ERROR_RESPONSES,
     )
     app.add_middleware(BodyLimitMiddleware, max_bytes=max_body_bytes)
 
