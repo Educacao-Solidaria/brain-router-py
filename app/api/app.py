@@ -96,9 +96,10 @@ def create_app(
         lifespan=None if tasks is None else tasks.lifespan,
         # Span de cada pedido pela telemetria nativa do FastAPI: só liga com o provedor do OTel
         # (`app.tracing.configure_tracing`) e continua o `traceparent` W3C de quem chamou. Sem
-        # os logs dela: com um provedor de logs do OTel, a exceção que escapasse do
-        # `RequestIdMiddleware` iria com mensagem e traceback.
-        telemetry={"logs": False, "exclude": _untraced},
+        # os logs dela (com um provedor de logs do OTel, a exceção que escapasse do
+        # `RequestIdMiddleware` iria com mensagem e traceback) e sem a auto-configuração pelo
+        # FASTAPI_OTEL_AUTO_CONFIGURE, que montaria um provedor sem o `_ScrubUrl`.
+        telemetry={"logs": False, "auto_configure": False, "exclude": _untraced},
     )
     # De dentro para fora (o último a entrar fica por fora): teto de corpo, GZip, rate limit,
     # X-Request-Id e CORS. O GZip do Starlette já deixa o text/event-stream de fora.

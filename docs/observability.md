@@ -6,8 +6,9 @@ studio (nomes, labels, buckets e privacidade). Métricas Prometheus: seção a e
 
 ## Traces (OpenTelemetry)
 
-**Ligar:** `app.tracing.configure_tracing()` na subida (o `brain-router ingest` já chama). As
-variáveis são do **processo**: o `.env` só alimenta o `Settings`.
+**Ligar:** `app.tracing.configure_tracing()` na subida (o `brain-router ingest` já chama); o
+`FASTAPI_OTEL_AUTO_CONFIGURE` é ignorado. As variáveis são do **processo**: o `.env` só alimenta o
+`Settings`.
 
 | Variável | Efeito |
 |---|---|

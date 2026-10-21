@@ -4,8 +4,9 @@ import asyncio
 import io
 import json
 import os
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, MutableMapping, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 import pytest
@@ -446,3 +447,23 @@ async def test_the_fastapi_telemetry_logs_stay_off(
     async with httpx.AsyncClient(transport=transport, base_url="http://brain") as client:
         assert (await client.post("/api/v1/search", json={})).status_code == 422
     assert records.get_finished_logs() == ()
+
+
+async def test_fastapi_never_configures_its_own_provider(
+    made_global: list[object], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Com FASTAPI_OTEL_AUTO_CONFIGURE, a subida do FastAPI montaria um provedor sem o `_ScrubUrl`.
+    monkeypatch.setenv("FASTAPI_OTEL_AUTO_CONFIGURE", "true")
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://col:4318")
+    app, sent = create_app(), list[str]()
+    messages = iter([{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}])
+
+    async def receive() -> dict[str, str]:
+        return next(messages)
+
+    async def send(message: MutableMapping[str, Any]) -> None:
+        sent.append(message["type"])
+
+    await app({"type": "lifespan", "asgi": {"version": "3.0"}}, receive, send)
+    assert sent == ["lifespan.startup.complete", "lifespan.shutdown.complete"]
+    assert made_global == []
