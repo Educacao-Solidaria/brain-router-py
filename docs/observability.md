@@ -1,7 +1,7 @@
 # Observabilidade do brain-router
 
 A parte deste serviço nas convenções da Fase 4, fixas entre gateway, cache, brain-router e
-studio (nomes, labels, buckets e privacidade): traces e métricas Prometheus.
+studio (nomes, labels, buckets e privacidade): traces, métricas Prometheus e o dashboard.
 
 ## Traces (OpenTelemetry)
 
@@ -100,3 +100,21 @@ réplicas): com vários workers, cada um tem o seu registro e a raspagem cairia 
 Para vários workers, aponte `PROMETHEUS_MULTIPROC_DIR` para uma pasta vazia a cada subida, antes
 de o processo importar `app.metrics`: cada worker grava em arquivo, o `render()` soma todos (o
 gauge de eval fica com o valor mais recente) e as métricas de processo e runtime saem.
+
+## Dashboard (Grafana)
+
+`deploy/grafana/brain-router.json`, com `uid` fixo `brain-router`. A fonte de dados é a variável
+`DS_PROMETHEUS` (tipo datasource, Prometheus): todo painel e toda query usam `${DS_PROMETHEUS}`,
+então o mesmo JSON entra pelo *Import* da interface ou por provisionamento de arquivo, sem editar
+uid de fonte.
+
+Painéis: scores de eval ao longo do tempo e o atual de cada um (`brain_router_eval_score`; com
+várias réplicas, a pior; a linha em 0,85 é o mesmo piso do quality gate do CI); relevância do
+reranker, média e fração até 0,5 (**vazio sem reranker no pipeline**); latência da busca
+p50/p95/p99 e p95 por modo; buscas por segundo por modo; buscas que não terminaram ok; latência e
+desfecho dos pedidos de embedding; latência do rerank.
+
+`tests/test_dashboard.py` confere no CI que toda métrica citada nas queries sai no texto do
+`/metrics` (nome errado não passa), que o `uid` é o fixo e que toda fonte é `${DS_PROMETHEUS}`.
+O teste não valida a sintaxe da PromQL, só os nomes: query nova se confere no Explore do Grafana
+(ou no parser do Prometheus) antes do commit.
