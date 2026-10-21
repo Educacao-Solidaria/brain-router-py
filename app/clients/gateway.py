@@ -26,6 +26,7 @@ from app.clients.openrouter import _error_detail
 from app.errors.exceptions import BrainRouterError
 from app.log import get_logger
 from app.settings import Settings
+from app.tracing import trace_headers
 
 log = get_logger(__name__)
 
@@ -125,7 +126,8 @@ class GatewayClient:
             raise ValueError("messages não pode ser vazia")
         payload = {**options, "model": model, "messages": messages, "stream": False}
         try:
-            response = await self._http.post(CHAT_PATH, json=payload)
+            # O traceparent do span corrente: o gateway continua o mesmo trace (sem span, nada).
+            response = await self._http.post(CHAT_PATH, json=payload, headers=trace_headers())
         except httpx.HTTPError as exc:  # timeout, conexão recusada, DNS
             raise GatewayError(type(exc).__name__) from exc
         if not response.is_success:

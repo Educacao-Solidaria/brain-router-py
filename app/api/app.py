@@ -6,8 +6,8 @@ saída). Sem handler, a rota responde 503 `backend_unavailable`, nunca uma lista
 """
 
 import re
-from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from typing import Annotated
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
@@ -52,6 +52,10 @@ STREAM_PATH = "/api/v1/search/stream"
 _ORIGIN = re.compile(r"https?://[^/\s]+")  # esquema e host[:porta], como o header Origin
 
 
+def _untraced(scope: MutableMapping[str, Any]) -> bool:
+    return scope.get("path") == HEALTH_PATH  # sonda a cada poucos segundos: só ruído no trace
+
+
 class BackendUnavailableError(BrainRouterError):
     def __init__(self, what: str) -> None:
         super().__init__(
@@ -90,6 +94,11 @@ def create_app(
         exception_handlers=EXCEPTION_HANDLERS,
         responses=ERROR_RESPONSES,
         lifespan=None if tasks is None else tasks.lifespan,
+        # Span de cada pedido pela telemetria nativa do FastAPI: só liga com o provedor do OTel
+        # (`app.tracing.configure_tracing`) e continua o `traceparent` W3C de quem chamou. Sem
+        # os logs dela: com um provedor de logs do OTel, a exceção que escapasse do
+        # `RequestIdMiddleware` iria com mensagem e traceback.
+        telemetry={"logs": False, "exclude": _untraced},
     )
     # De dentro para fora (o último a entrar fica por fora): teto de corpo, GZip, rate limit,
     # X-Request-Id e CORS. O GZip do Starlette já deixa o text/event-stream de fora.

@@ -3,24 +3,30 @@
 import asyncio
 import io
 import json
+import os
 from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 
 import httpx
 import pytest
-from opentelemetry import trace
+from opentelemetry import _logs, baggage, context, trace
 from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
 from opentelemetry.exporter.otlp.proto.http import trace_exporter
+from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs.export import InMemoryLogRecordExporter, SimpleLogRecordProcessor
 from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.trace import INVALID_SPAN, StatusCode
+from opentelemetry.trace import INVALID_SPAN, SpanKind, StatusCode
 from pydantic import SecretStr
 
 from app import __version__, tracing
+from app.api import create_app
+from app.clients.gateway import GatewayClient
 from app.clients.openrouter import OpenRouterEmbeddingClient
 from app.clients.rerank import OpenRouterRerankerClient
 from app.log import configure_logging, shutdown_logging
 from app.schemas.domain import Chunk, SearchResult
+from app.schemas.mcp import HybridSearchInput, HybridSearchOutput
 from app.storage.interfaces import InMemoryVectorStore
 
 KEY = SecretStr("sk-or-v1-chave-de-teste")
@@ -33,6 +39,8 @@ CHUNKS = [
 VECTOR = [0.123456, 0.654321, 0.111111]  # componentes fáceis de procurar no span
 USER_DATA = (QUERY, "Ana Souza", "matrícula", "3333-4444", "0.123456", "0.654321")
 BASE = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://col:4318"}
+TRACE_ID, PARENT_ID = "0af7651916cd43dd8448eb211c80319c", "b7ad6b7169203331"
+GATEWAY = f"00-{TRACE_ID}-{PARENT_ID}-01"  # o formato do `tracing.Inject` do flow-gateway-go
 
 
 def _leaks(spans: Sequence[ReadableSpan]) -> list[str]:
@@ -93,9 +101,16 @@ class Traced:
 
 @pytest.fixture
 def made_global(monkeypatch: pytest.MonkeyPatch) -> list[object]:
-    """Os provedores que viraram o global do OTel (nenhum fica no processo de teste)."""
+    """Os provedores que viraram o global do OTel, num global de mentira que o FastAPI também
+    lê (o de verdade só aceita um por processo)."""
+    for name in [name for name in os.environ if name.startswith(("OTEL_", "OPENINFERENCE_"))]:
+        monkeypatch.delenv(name)  # o SDK lê o ambiente do processo (amostrador, desligamento)
     providers: list[object] = []
+    real = trace.get_tracer_provider
     monkeypatch.setattr(trace, "set_tracer_provider", providers.append)
+    monkeypatch.setattr(
+        trace, "get_tracer_provider", lambda: providers[-1] if providers else real()
+    )
     monkeypatch.setattr(tracing, "_tracer", None)  # o monkeypatch devolve o estado no fim
     return providers
 
@@ -283,3 +298,151 @@ async def test_a_long_batch_keeps_the_count_and_at_most_max_span_items(
     assert full["brain_router.embedding.chars"] == sum(map(len, texts))
     assert (empty["brain_router.embedding.texts"], empty["brain_router.embedding.chars"]) == (0, 0)
     assert "embedding.model_name" in full  # não foi descartado pelo teto de atributos do SDK
+
+
+async def _post(path: str, headers: dict[str, str]) -> httpx.Response:
+    """`POST` na API v1 com um handler que passa pela busca vetorial instrumentada."""
+    store = InMemoryVectorStore()
+    await store.add_chunks("default", CHUNKS)
+
+    async def search(body: HybridSearchInput) -> HybridSearchOutput:
+        results = await tracing.TracedVectorStore(store).search_vector("default", VECTOR)
+        return HybridSearchOutput(
+            query=body.query, results=results, total_found=len(results), execution_time_ms=1.0
+        )
+
+    transport = httpx.ASGITransport(app=create_app(search=search))
+    async with httpx.AsyncClient(transport=transport, base_url="http://brain") as client:
+        return await client.post(path, json={"query": QUERY}, headers=headers)
+
+
+def _servers(spans: Sequence[ReadableSpan]) -> list[ReadableSpan]:
+    return [span for span in spans if span.kind is SpanKind.SERVER]
+
+
+async def test_the_gateway_traceparent_continues_the_same_trace(
+    start: Callable[..., Traced],
+) -> None:
+    traced = start()
+    response = await _post("/api/v1/search", {"traceparent": GATEWAY, "tracestate": "gw=1"})
+    spans = traced.spans()
+    (server,) = _servers(spans)
+
+    assert response.status_code == 200 and server.name == "POST /api/v1/search"
+    assert server.parent is not None and server.parent.is_remote
+    assert f"{server.parent.span_id:016x}" == PARENT_ID  # filho do salto do gateway
+    assert {f"{span.context.trace_id:032x}" for span in spans} == {TRACE_ID}
+    assert {span.context.trace_state.to_header() for span in spans} == {"gw=1"}
+    by_id = {span.context.span_id: span for span in spans}
+    hop = next(span for span in spans if span.name == "vector_search")
+    while hop.parent is not None and hop.parent.span_id in by_id:  # sobe até o span do pedido
+        hop = by_id[hop.parent.span_id]
+    assert hop is server
+
+
+async def test_an_unsampled_gateway_trace_stays_unsampled(start: Callable[..., Traced]) -> None:
+    traced = start()  # o amostrador padrão (ParentBased) segue a decisão de quem chamou
+    response = await _post("/api/v1/search", {"traceparent": GATEWAY[:-2] + "00"})
+    assert response.status_code == 200 and traced.spans() == []
+
+
+@pytest.mark.parametrize(
+    "traceparent",
+    [
+        f"00-{'0' * 32}-{PARENT_ID}-01",  # trace id zerado
+        f"00-{TRACE_ID}-{'0' * 16}-01",  # parent id zerado
+        f"ff-{TRACE_ID}-{PARENT_ID}-01",  # versão proibida
+        GATEWAY.upper(),  # a W3C só aceita hexadecimal minúsculo
+        "lixo",
+    ],
+)
+async def test_an_invalid_traceparent_starts_a_new_trace(
+    start: Callable[..., Traced], traceparent: str
+) -> None:
+    traced = start()
+    await _post("/api/v1/search", {"traceparent": traceparent})
+    (server,) = _servers(traced.spans())
+    assert server.parent is None and f"{server.context.trace_id:032x}" != TRACE_ID
+
+
+async def test_the_raw_url_and_the_baggage_never_reach_the_span(
+    start: Callable[..., Traced],
+) -> None:
+    traced, secret = start(), "Ana-Souza-cpf-12345"
+    await _post(f"/api/v1/search?q={secret}", {"traceparent": GATEWAY, "baggage": f"u={secret}"})
+    unknown = await _post(f"/api/v1/{secret}", {})  # rota desconhecida: o path é texto livre
+    spans = traced.spans()
+    known, other = (dict(span.attributes or {}) for span in _servers(spans))
+
+    assert unknown.status_code == 404 and other["url.path"] == "REDACTED"
+    assert (known["url.query"], known["url.path"]) == ("REDACTED", "REDACTED")
+    assert known["http.route"] == "/api/v1/search"  # o template da rota fica
+    assert secret.encode() not in encode_spans(spans).SerializeToString()
+    assert _leaks(spans) == []
+
+
+async def test_health_probes_are_not_traced(start: Callable[..., Traced]) -> None:
+    traced = start()
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=create_app()), base_url="http://brain"
+    ) as client:
+        assert (await client.get("/healthz")).status_code == 200
+    assert traced.spans() == []
+
+
+async def test_the_gateway_call_carries_the_current_trace_but_not_the_baggage(
+    start: Callable[..., Traced],
+) -> None:
+    traced, seen = start(), list[httpx.Headers]()
+
+    def gateway(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers)
+        return httpx.Response(200, json={"model": "m", "choices": [{"message": {"content": "ok"}}]})
+
+    messages = [{"role": "user", "content": QUERY}]
+    async with GatewayClient("http://gw", transport=httpx.MockTransport(gateway)) as client:
+        await client.chat(messages, model="m")  # sem span corrente: nada a propagar
+        token = context.attach(baggage.set_baggage("usuario", "ana"))
+        try:
+            with traced.provider.get_tracer("t").start_as_current_span("chamada") as span:
+                await client.chat(messages, model="m")
+        finally:
+            context.detach(token)
+
+    current = span.get_span_context()
+    assert "traceparent" not in seen[0]
+    version, trace_id, parent_id, flags = seen[1]["traceparent"].split("-")
+    assert (version, trace_id, parent_id) == (
+        "00",
+        f"{current.trace_id:032x}",
+        f"{current.span_id:016x}",
+    )
+    # Amostrado. O SDK 1.45 liga também o bit "random" (0x02) do Trace Context nível 2: "03". O
+    # `parseParent` do gateway aceita qualquer flag e lê só o bit 0.
+    assert int(flags, 16) & 1
+    assert "baggage" not in seen[1]
+
+
+async def test_the_fastapi_telemetry_logs_stay_off(
+    start: Callable[..., Traced], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Com um provedor de logs do OTel no processo, a telemetria nativa mandaria por ele as falhas
+    # de validação e a exceção que escapasse do `RequestIdMiddleware`: o `create_app` desliga.
+    records = InMemoryLogRecordExporter()  # type: ignore[no-untyped-call]  # __init__ sem anotação
+    logs = LoggerProvider()
+    logs.add_log_record_processor(SimpleLogRecordProcessor(records))
+    monkeypatch.setattr(_logs, "get_logger_provider", lambda: logs)
+    # O `_logs.get_logger` não passa pelo atributo acima: sem trocar este, o logger sai no-op e o
+    # teste não falharia nunca (conferido ligando os logs no `create_app`).
+    monkeypatch.setattr(
+        _logs, "get_logger", lambda name, version, *rest, **kw: logs.get_logger(name)
+    )
+    start()
+
+    async def search(body: HybridSearchInput) -> HybridSearchOutput:
+        raise AssertionError("corpo inválido não chega ao handler")
+
+    transport = httpx.ASGITransport(app=create_app(search=search))
+    async with httpx.AsyncClient(transport=transport, base_url="http://brain") as client:
+        assert (await client.post("/api/v1/search", json={})).status_code == 422
+    assert records.get_finished_logs() == ()

@@ -90,7 +90,8 @@ Alternativa ao MCP para o gateway e o studio (`POST /api/v1/search`, `/search/st
 `/index`).
 Contrato, códigos de erro e teto de corpo em [`docs/api-v1.md`](docs/api-v1.md). A busca e a
 indexação entram por `create_app(search=..., index=...)`; sem elas, as rotas dão 503
-`backend_unavailable`: `uv run uvicorn --factory app.api:create_app --port 8000`.
+`backend_unavailable`: `uv run uvicorn --factory app.api:create_app --port 8000`. Traces
+(OpenTelemetry, correlacionados com o gateway): [`docs/observability.md`](docs/observability.md).
 
 ### Teste de carga da ingestão (locust)
 
