@@ -107,7 +107,10 @@ async def grade(
     search: BaseTextSearch,
     evaluator: BaseEvaluator,
 ) -> list[Graded]:
-    """Grava os contextos de cada amostra numa coleção só dela e avalia o 1º resultado."""
+    """Grava os contextos de cada amostra numa coleção só dela e avalia o 1º resultado.
+
+    As amostras são as do `generate_dataset` (`metadata` com `id`, `topic` e `gold_index`).
+    """
     graded = []
     for sample in samples:
         collection = f"{PREFIX}{sample.metadata['id']}"

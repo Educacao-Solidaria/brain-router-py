@@ -91,7 +91,8 @@ score médio abaixo de 0,85; a tabela por tema vai para o resumo do job. O score
 `FaithfulnessEvaluator` da resposta de referência contra o 1º resultado da busca léxica, em 200
 perguntas do dataset sintético, cada uma numa coleção com o trecho que a responde e 4 de outros
 temas: mede a recuperação (ingestão, `tsvector` e consulta), sem LLM e sem chamada paga, e não a
-fidelidade de uma resposta gerada. Localmente: as variáveis da seção acima e o mesmo comando.
+fidelidade de uma resposta gerada. Localmente: as variáveis da seção acima, `uv run alembic
+upgrade head` e o mesmo comando.
 
 ### API HTTP v1 (FastAPI)
 
