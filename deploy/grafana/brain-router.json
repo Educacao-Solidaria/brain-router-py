@@ -1,0 +1,194 @@
+{
+  "uid": "brain-router",
+  "title": "brain-router",
+  "description": "Serviço RAG: scores de eval, relevância do reranker e latência da busca, dos embeddings e do rerank. Métricas em docs/observability.md.",
+  "tags": ["brain-router", "fase-4"],
+  "editable": true,
+  "graphTooltip": 1,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-24h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "DS_PROMETHEUS",
+        "label": "Prometheus",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "refresh": 1,
+        "regex": "",
+        "options": []
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Scores de eval ao longo do tempo (fidelidade e relevância)",
+      "description": "Último score (0 a 1) de cada eval publicada por metrics.record_eval_score (faithfulness, context_relevance, answer_relevance...); com várias réplicas, vale a pior. A linha vermelha é o piso de 0,85 do quality gate do CI. Sem eval publicada no processo raspado, o painel fica vazio.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none", "decimals": 2, "min": 0, "max": 1,
+          "custom": { "thresholdsStyle": { "mode": "line" } },
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.85 }] }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "{{metric}}",
+          "expr": "min by (metric) (brain_router_eval_score)" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Score atual de cada eval",
+      "description": "O valor mais recente de cada eval; vermelho abaixo de 0,85, o piso do quality gate.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none", "decimals": 2, "min": 0, "max": 1,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 0.85 }] }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "orientation": "auto"
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "{{metric}}",
+          "expr": "min by (metric) (brain_router_eval_score)" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Relevância do reranker: média e fração até 0,5",
+      "description": "Relevância (0 a 1) que o reranker deu a cada resultado devolvido. Fica vazio sem reranker no pipeline: o score do RRF (perto de 0,016) não entra, nem o fallback do reranker (score 0).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 2, "min": 0, "max": 1 }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "média",
+          "expr": "sum(rate(brain_router_result_score_sum[$__rate_interval])) / sum(rate(brain_router_result_score_count[$__rate_interval]))" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "fração até 0,5",
+          "expr": "sum(rate(brain_router_result_score_bucket{le=\"0.5\"}[$__rate_interval])) / sum(rate(brain_router_result_score_count[$__rate_interval]))" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Latência da busca p50 / p95 / p99",
+      "description": "/api/v1/search e /api/v1/search/stream, todos os modos (o fallback léxico incluído).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(brain_router_search_duration_seconds_bucket[$__rate_interval])))" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(brain_router_search_duration_seconds_bucket[$__rate_interval])))" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "p99",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(brain_router_search_duration_seconds_bucket[$__rate_interval])))" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Buscas por segundo, por modo",
+      "description": "hybrid; dense (alpha 1); lexical (alpha 0 ou o fallback léxico respondeu, com a OpenRouter fora).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "{{mode}}",
+          "expr": "sum by (mode) (rate(brain_router_search_requests_total[$__rate_interval]))" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Latência p95 da busca, por modo",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "{{mode}}",
+          "expr": "histogram_quantile(0.95, sum by (le, mode) (rate(brain_router_search_duration_seconds_bucket[$__rate_interval])))" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Buscas que não terminaram ok",
+      "description": "error, timeout ou canceled (o cliente desconectou ou o prazo de quem chamou venceu).",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "{{outcome}}",
+          "expr": "sum by (outcome) (rate(brain_router_search_requests_total{outcome!=\"ok\"}[$__rate_interval]))" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Embeddings: latência p50 / p95",
+      "description": "Cada pedido à OpenRouter (um lote), com os retries; o acerto do cache de embeddings não entra.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(brain_router_embedding_duration_seconds_bucket[$__rate_interval])))" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(brain_router_embedding_duration_seconds_bucket[$__rate_interval])))" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Embeddings: pedidos por desfecho",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "{{outcome}}",
+          "expr": "sum by (outcome) (rate(brain_router_embedding_requests_total[$__rate_interval]))" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Rerank: latência p50 / p95",
+      "description": "Inclui o rerank que falha e cai no fallback (ordem de entrada). Fica vazio sem reranker no pipeline.",
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 24 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(brain_router_rerank_duration_seconds_bucket[$__rate_interval])))" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" }, "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(brain_router_rerank_duration_seconds_bucket[$__rate_interval])))" }
+      ]
+    }
+  ]
+}
