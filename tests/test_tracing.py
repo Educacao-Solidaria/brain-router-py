@@ -382,12 +382,13 @@ async def test_the_raw_url_and_the_baggage_never_reach_the_span(
     assert _leaks(spans) == []
 
 
-async def test_health_probes_are_not_traced(start: Callable[..., Traced]) -> None:
+@pytest.mark.parametrize("path", ["/healthz", "/metrics"])
+async def test_probes_and_scrapes_are_not_traced(start: Callable[..., Traced], path: str) -> None:
     traced = start()
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=create_app()), base_url="http://brain"
     ) as client:
-        assert (await client.get("/healthz")).status_code == 200
+        assert (await client.get(path)).status_code == 200
     assert traced.spans() == []
 
 

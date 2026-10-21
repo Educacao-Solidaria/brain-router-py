@@ -21,6 +21,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from app.api.errors import INTERNAL_ERROR, error_response
 from app.health import HEALTH_PATH
 from app.log import get_logger
+from app.metrics import METRICS_PATH
 
 log = get_logger(__name__)
 
@@ -122,8 +123,8 @@ class RateLimitMiddleware:
         self._buckets: OrderedDict[str, tuple[float, float]] = OrderedDict()  # fichas, quando
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        # A sonda de saúde não conta: o resultado dela tem cache curto (app.health).
-        if scope["type"] != "http" or scope.get("path") == HEALTH_PATH:
+        # A sonda de saúde (cache curto, app.health) e a raspagem do Prometheus não contam.
+        if scope["type"] != "http" or scope.get("path") in (HEALTH_PATH, METRICS_PATH):
             await self.app(scope, receive, send)
             return
         wait = self._take(self._client(scope))

@@ -36,6 +36,10 @@ from app.search.fallback import DEGRADED
 # Sem as séries `*_created`, que o contrato não lista (a função não tem anotação de tipo).
 disable_created_metrics()  # type: ignore[no-untyped-call]
 
+METRICS_PATH = "/metrics"
+# O formato texto clássico: o 0.26 rotula o padrão como 1.0.0, mas com nomes do formato antigo e o
+# escape `underscores` do `generate_latest` os bytes são os do 0.0.4, que todo raspador lê.
+CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 LATENCY_BUCKETS = (0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0)
 SCORE_BUCKETS = (0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0)
 _EVAL_METRIC = re.compile(r"[a-z][a-z0-9_]{0,63}")  # nome de métrica de eval: faithfulness etc.
@@ -134,7 +138,7 @@ def record_eval_score(metric: str, score: float) -> None:
 
 
 def render() -> bytes:
-    """As métricas no formato texto do Prometheus (`prometheus_client.CONTENT_TYPE_LATEST`)."""
+    """As métricas no formato texto do Prometheus (`CONTENT_TYPE`)."""
     if "PROMETHEUS_MULTIPROC_DIR" not in os.environ:
         return generate_latest(REGISTRY)
     registry = CollectorRegistry()

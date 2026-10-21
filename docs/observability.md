@@ -54,9 +54,27 @@ iria com mensagem e traceback.
 ## Métricas (Prometheus)
 
 Definidas em `app/metrics.py`, no registro padrão do `prometheus_client`, que já traz as de
-processo e runtime (`process_*`, `python_*`); `metrics.render()` dá o formato texto (a rota
-`/metrics` entra à parte). Latência em segundos, buckets `0.005 0.01 0.025 0.05 0.1 0.25 0.5 1
-2.5 5`; sem as séries `*_created`.
+processo e runtime (`process_*`, `python_*`). Latência em segundos, buckets `0.005 0.01 0.025
+0.05 0.1 0.25 0.5 1 2.5 5`; sem as séries `*_created`.
+
+**Rota.** `GET /metrics` (fora do OpenAPI) serve o `metrics.render()` com `text/plain;
+version=0.0.4; charset=utf-8`: o `prometheus_client` 0.26 rotula o padrão como 1.0.0, mas com
+nomes do formato antigo os bytes são os do 0.0.4, que todo raspador lê. Fica fora do rate limit e
+do GZip e não gera span. **Sem autenticação, por contrato: a exposição é só a rede interna.** O
+brain-router inteiro já é interno (a API v1 também não tem autenticação; quem a chama é o gateway,
+que só usa `/api/v1/*`); o uvicorn sobe em `127.0.0.1` por padrão e, em contêiner, a porta fica na
+rede dos serviços, sem publicar no host. O Prometheus da mesma rede raspa direto
+(`http://<brain-router>:8000/metrics`). Se a porta um dia ficar atrás de um proxy público,
+bloqueie `/metrics` nele.
+
+```yaml
+scrape_configs:
+  - job_name: brain-router
+    scrape_interval: 15s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["brain-router:8000"]  # o nome do serviço na rede interna
+```
 
 | Métrica | Tipo | Labels | O que conta |
 |---|---|---|---|
