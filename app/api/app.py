@@ -32,6 +32,7 @@ from app.api.middleware import (
 from app.errors.exceptions import BrainRouterError
 from app.health import HEALTH_PATH, Dependency, HealthReport, report
 from app.log import get_logger
+from app.metrics import measured_search
 from app.schemas.mcp import (
     HybridSearchInput,
     HybridSearchOutput,
@@ -87,6 +88,8 @@ def create_app(
     for origin in cors_origins:
         if not _ORIGIN.fullmatch(origin):  # recusa "*", caminho e barra no fim
             raise ValueError(f"origem de CORS inválida: {origin!r}")
+    if search is not None:
+        search = measured_search(search)  # brain_router_search_*: as duas rotas de busca
     app = FastAPI(
         title="brain-router-py",
         version=__version__,

@@ -26,6 +26,7 @@ from app.clients.interfaces import BaseRerankerClient
 from app.clients.openrouter import _error_detail
 from app.errors.exceptions import RerankServiceError
 from app.log import get_logger
+from app.metrics import RERANK_DURATION, RESULT_SCORE
 from app.perf import timed
 from app.schemas.domain import Chunk, SearchResult
 from app.settings import Settings
@@ -131,8 +132,11 @@ class OpenRouterRerankerClient(BaseRerankerClient):
             "top_n": expected,
             "provider": {"data_collection": "deny"},
         }
-        with reranker_span(self._model, query, documents, expected):
-            return self._parse(await self._post(payload), len(documents), expected)
+        with RERANK_DURATION.time(), reranker_span(self._model, query, documents, expected):
+            ranked = self._parse(await self._post(payload), len(documents), expected)
+        for _, score in ranked:  # só com resposta válida: o fallback (score 0.0) não é relevância
+            RESULT_SCORE.observe(score)
+        return ranked
 
     async def aclose(self) -> None:
         await self._http.aclose()

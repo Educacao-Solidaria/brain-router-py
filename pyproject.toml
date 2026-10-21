@@ -13,6 +13,7 @@ dependencies = [
     "openinference-semantic-conventions>=0.1.41",
     "opentelemetry-exporter-otlp-proto-http>=1.45.1",
     "opentelemetry-sdk>=1.45.1",
+    "prometheus-client>=0.26.0",
     "pydantic>=2.7.0",
     "pydantic-settings>=2.4.0",
     "sqlmodel>=0.0.22",
