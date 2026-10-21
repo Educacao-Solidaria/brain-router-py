@@ -1,5 +1,5 @@
 """Portão de qualidade no Postgres real (`pytest -m integration`): passa com o pipeline de hoje,
-sempre com o mesmo relatório, reprova uma busca que não ordena e não deixa coleção para trás."""
+sempre com o mesmo relatório, reprova a busca que não ordena ou sai da coleção e não deixa lixo."""
 
 import asyncio
 from pathlib import Path
@@ -56,12 +56,22 @@ def test_passes_with_the_same_report_every_time_and_drops_its_collections(
     assert asyncio.run(_left_behind()) == 0
 
 
-def test_fails_when_the_search_stops_ranking(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+# Sem o filtro, o 1º vira o trecho de uma pergunta irmã (faithfulness quase 1): só reprova porque
+# o `grade` confere se o documento é um dos gravados para a pergunta.
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("ORDER BY score DESC, c.id", "ORDER BY c.id"),
+        ("d.collection_id = :collection", "CAST(:collection AS text) <> ''"),
+    ],
+    ids=["sem-ordenar", "sem-colecao"],
+)
+def test_fails_when_the_search_stops_ranking_or_leaves_the_collection(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], old: str, new: str
 ) -> None:
-    unranked = str(gate._SEARCH).replace("ORDER BY score DESC, c.id", "ORDER BY c.id")
-    assert unranked != str(gate._SEARCH)
-    monkeypatch.setattr(gate, "_SEARCH", text(unranked))
+    broken = str(gate._SEARCH).replace(old, new)
+    assert broken != str(gate._SEARCH)
+    monkeypatch.setattr(gate, "_SEARCH", text(broken))
 
     assert gate.main() == 1
     assert "**reprovado**" in capsys.readouterr().out

@@ -29,7 +29,10 @@ class Pool(BaseTextSearch):
     def index(self, collection: str) -> gate.Index:
         async def store(body: IndexDocumentInput) -> IndexDocumentOutput:
             self.stored.setdefault(collection, []).append(body)
-            return IndexDocumentOutput(document_id="d", chunks_created=1, success=True, message="")
+            # O id do documento é o da coleção, o mesmo que a busca devolve no chunk.
+            return IndexDocumentOutput(
+                document_id=collection, chunks_created=1, success=True, message=""
+            )
 
         return store
 
@@ -124,7 +127,7 @@ def test_an_empty_run_never_passes() -> None:
         gate.render([])
 
 
-@pytest.mark.parametrize(("score", "code"), [(0.9, 0), (0.5, 1)])
+@pytest.mark.parametrize(("score", "code"), [(0.85, 0), (0.8499, 1)])
 def test_main_prints_only_the_report_and_exits_by_the_threshold(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], score: float, code: int
 ) -> None:

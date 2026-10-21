@@ -110,15 +110,19 @@ async def grade(
     """Grava os contextos de cada amostra numa coleção só dela e avalia o 1º resultado.
 
     As amostras são as do `generate_dataset` (`metadata` com `id`, `topic` e `gold_index`).
+    Um 1º resultado que não é um dos documentos gravados para a amostra conta como nada
+    recuperado: o trecho de uma pergunta irmã (mesmo tema e curso) tem faithfulness quase 1, e
+    uma busca que perde a coleção passaria com 0,91.
     """
     graded = []
     for sample in samples:
         collection = f"{PREFIX}{sample.metadata['id']}"
-        store = index(collection)
+        store, own = index(collection), set[str]()
         for n, context in enumerate(sample.contexts):
             body = IndexDocumentInput(title="trecho", content=context, source_uri=f"eval://{n}")
-            await store(body)
-        first = (await search.search_text(collection, sample.query, limit=1))[:1]
+            own.add((await store(body)).document_id)
+        found = (await search.search_text(collection, sample.query, limit=1))[:1]
+        first = [result for result in found if result.chunk.document_id in own]
         update = {"contexts": [result.chunk.content for result in first]}
         output = await evaluator.evaluate(sample.model_copy(update=update))
         gold = f"eval://{sample.metadata['gold_index']}"
