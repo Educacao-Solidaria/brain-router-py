@@ -84,6 +84,15 @@ docker compose down -v           # descarta o volume
 
 Sem `DATABASE_URL` os testes de integração falham em vez de pular — de propósito.
 
+### Quality gate do RAG (CI)
+
+O job `quality-gate` roda `uv run python -m app.evals.gate` no Postgres do job e falha com o
+score médio abaixo de 0,85; a tabela por tema vai para o resumo do job. O score é o
+`FaithfulnessEvaluator` da resposta de referência contra o 1º resultado da busca léxica, em 200
+perguntas do dataset sintético, cada uma numa coleção com o trecho que a responde e 4 de outros
+temas: mede a recuperação (ingestão, `tsvector` e consulta), sem LLM e sem chamada paga, e não a
+fidelidade de uma resposta gerada. Localmente: as variáveis da seção acima e o mesmo comando.
+
 ### API HTTP v1 (FastAPI)
 
 Alternativa ao MCP para o gateway e o studio (`POST /api/v1/search`, `/search/stream` em SSE e
