@@ -24,10 +24,13 @@ from openinference.semconv.trace import DocumentAttributes as Doc
 from openinference.semconv.trace import EmbeddingAttributes, RerankerAttributes, SpanAttributes
 from openinference.semconv.trace import OpenInferenceSpanKindValues as Kind
 from opentelemetry import trace
+from opentelemetry.context import Context
 from opentelemetry.sdk.resources import SERVICE_NAME, SERVICE_VERSION, Resource
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import Span as SdkSpan
+from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.trace import INVALID_SPAN, Span, StatusCode
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 from app import __version__
 from app.log import get_logger
@@ -50,6 +53,28 @@ HIDE_VARIABLES = (
 )
 
 _tracer: OITracer | None = None  # None: tracing desligado, `_span` devolve um span no-op
+_W3C = TraceContextTextMapPropagator()  # só traceparent e tracestate: o baggage não sai daqui
+# O que o cliente escreve na URL e a telemetria do FastAPI grava cru (da query, só 5 chaves
+# conhecidas viram REDACTED): a query string inteira e o path de rota desconhecida.
+_URL_ATTRIBUTES = ("url.query", "url.path")
+
+
+class _ScrubUrl(SpanProcessor):
+    """Troca a URL crua do span de cada pedido por REDACTED antes de qualquer exportação. Fica o
+    `http.route`, o template da rota."""
+
+    def on_start(self, span: SdkSpan, parent_context: Context | None = None) -> None:
+        for key in _URL_ATTRIBUTES:
+            if key in (span.attributes or {}):
+                span.set_attribute(key, "REDACTED")
+
+
+def trace_headers() -> dict[str, str]:
+    """`traceparent` e `tracestate` do span corrente, para o serviço chamado continuar o trace
+    (vazio sem span). Só W3C: o `baggage` que chegou não é repassado."""
+    headers: dict[str, str] = {}
+    _W3C.inject(headers)
+    return headers
 
 
 def _revealed(environ: Mapping[str, str]) -> list[str]:
@@ -99,7 +124,8 @@ def traces_endpoint(environ: Mapping[str, str] = os_environ) -> str | None:
 def configure_tracing(environ: Mapping[str, str] = os_environ) -> TracerProvider | None:
     """Liga o envio dos spans se o ambiente pedir (uma vez, na subida); None se ficou desligado.
 
-    O provedor vira o global do OTel, o que o FastAPI 0.150 usa no span de cada pedido HTTP.
+    O provedor vira o global do OTel: com ele, a telemetria nativa do FastAPI 0.150 cria o span
+    de cada pedido HTTP e continua o `traceparent` W3C de quem chamou (o gateway em Go).
     """
     global _tracer
     endpoint = traces_endpoint(environ)
@@ -110,6 +136,7 @@ def configure_tracing(environ: Mapping[str, str] = os_environ) -> TracerProvider
 
     resource = Resource.create({SERVICE_NAME: SERVICE, SERVICE_VERSION: __version__})
     provider = TracerProvider(resource=resource)  # amostrador do OTEL_TRACES_SAMPLER
+    provider.add_span_processor(_ScrubUrl())  # no início do span: antes de qualquer exportação
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
     trace.set_tracer_provider(provider)
     _tracer = OITracer(provider.get_tracer(__name__, __version__), trace_config(environ))
