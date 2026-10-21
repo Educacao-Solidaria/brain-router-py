@@ -109,7 +109,7 @@ então o mesmo JSON entra pelo *Import* da interface ou por provisionamento de a
 uid de fonte.
 
 Painéis: scores de eval ao longo do tempo e o atual de cada um (`brain_router_eval_score`; com
-várias réplicas, a pior; a linha vermelha é o piso de 0,85 do quality gate do CI); relevância do
+várias réplicas, a pior; a linha em 0,85 é o mesmo piso do quality gate do CI); relevância do
 reranker, média e fração até 0,5 (**vazio sem reranker no pipeline**); latência da busca
 p50/p95/p99 e p95 por modo; buscas por segundo por modo; buscas que não terminaram ok; latência e
 desfecho dos pedidos de embedding; latência do rerank.

@@ -30,7 +30,7 @@
       "id": 1,
       "type": "timeseries",
       "title": "Scores de eval ao longo do tempo (fidelidade e relevância)",
-      "description": "Último score (0 a 1) de cada eval publicada por metrics.record_eval_score (faithfulness, context_relevance, answer_relevance...); com várias réplicas, vale a pior. A linha vermelha é o piso de 0,85 do quality gate do CI. Sem eval publicada no processo raspado, o painel fica vazio.",
+      "description": "Último score (0 a 1) de cada eval publicada por metrics.record_eval_score (faithfulness, context_relevance, answer_relevance...); com várias réplicas, vale a pior. A linha em 0,85 é o mesmo piso do quality gate do CI. Sem eval publicada no processo raspado, o painel fica vazio.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 8, "w": 16, "x": 0, "y": 0 },
       "fieldConfig": {
@@ -51,7 +51,7 @@
       "id": 2,
       "type": "stat",
       "title": "Score atual de cada eval",
-      "description": "O valor mais recente de cada eval; vermelho abaixo de 0,85, o piso do quality gate.",
+      "description": "O valor mais recente de cada eval (com várias réplicas, a pior); vermelho abaixo de 0,85, o piso do quality gate do CI.",
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "gridPos": { "h": 8, "w": 8, "x": 16, "y": 0 },
       "fieldConfig": {
