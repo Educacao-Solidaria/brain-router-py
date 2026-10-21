@@ -86,8 +86,9 @@ def test_in_multiprocess_mode_the_route_serves_what_every_worker_counted(tmp_pat
 
         asyncio.run(main(sys.argv[1]))
     """
-    env = {"PROMETHEUS_MULTIPROC_DIR": str(tmp_path), "PATH": "/usr/bin:/bin"}
-    scraped = tmp_path.parent / "scrape.txt"
+    (multiproc := tmp_path / "prometheus").mkdir()
+    env = {"PROMETHEUS_MULTIPROC_DIR": str(multiproc), "PATH": "/usr/bin:/bin"}
+    scraped = tmp_path / "scrape.txt"
     for step in ("search", "search", str(scraped)):
         run = subprocess.run(
             [sys.executable, "-c", script, step], env=env, capture_output=True, text=True
