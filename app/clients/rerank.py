@@ -29,6 +29,7 @@ from app.log import get_logger
 from app.perf import timed
 from app.schemas.domain import Chunk, SearchResult
 from app.settings import Settings
+from app.tracing import reranker_span
 
 log = get_logger(__name__)
 
@@ -130,7 +131,8 @@ class OpenRouterRerankerClient(BaseRerankerClient):
             "top_n": expected,
             "provider": {"data_collection": "deny"},
         }
-        return self._parse(await self._post(payload), len(documents), expected)
+        with reranker_span(self._model, query, documents, expected):
+            return self._parse(await self._post(payload), len(documents), expected)
 
     async def aclose(self) -> None:
         await self._http.aclose()
