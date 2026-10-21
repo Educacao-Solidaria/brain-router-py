@@ -74,6 +74,7 @@ def _ingest(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     from app.ingest import Options, Report, ingest_directory, render
     from app.log import configure_logging, shutdown_logging
     from app.settings import get_settings
+    from app.tracing import configure_tracing
 
     if not args.directory.is_dir():
         parser.error(f"não é um diretório: {args.directory}")
@@ -96,6 +97,7 @@ def _ingest(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
     configure_logging("INFO", json=False, stream=sys.stderr)  # progresso; o stdout é do relatório
     try:
+        configure_tracing()  # os spans dos embeddings vão ao coletor OTLP, se o ambiente pedir
         report = asyncio.run(run())
     finally:
         shutdown_logging()

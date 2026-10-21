@@ -30,6 +30,7 @@ from app.errors.exceptions import EmbeddingServiceError
 from app.log import get_logger
 from app.perf import timed
 from app.settings import Settings
+from app.tracing import embedding_span
 
 log = get_logger(__name__)
 
@@ -187,7 +188,8 @@ class OpenRouterEmbeddingClient(BaseEmbeddingClient):
             "encoding_format": "float",
             "provider": {"data_collection": "deny"},
         }
-        return self._parse(await self._post(payload), len(batch))
+        with embedding_span(self._model, batch):  # um span por pedido, com os retries dentro
+            return self._parse(await self._post(payload), len(batch))
 
     async def _post(self, payload: dict[str, Any]) -> httpx.Response:
         reason = ""
