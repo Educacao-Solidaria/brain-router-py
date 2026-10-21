@@ -54,6 +54,17 @@ def test_integration_job_migrates_a_pgvector_service_before_marked_tests() -> No
     assert runs.index("uv run alembic upgrade head") < runs.index("uv run pytest -m integration")
 
 
+def test_quality_gate_job_migrates_then_fails_the_step_with_the_gate() -> None:
+    job = _load_yaml(".github/workflows/ci.yml")["jobs"]["quality-gate"]
+    runs = [step["run"] for step in job["steps"] if "run" in step]
+    (gate,) = [step for step in job["steps"] if "app.evals.gate" in step.get("run", "")]
+
+    assert job["services"]["postgres"]["image"].startswith("pgvector/pgvector:")
+    assert runs.index("uv run alembic upgrade head") < runs.index(gate["run"])
+    # Sem `shell: bash` explícito o passo roda sem pipefail e o tee devolveria 0 com o portão em 1.
+    assert gate["shell"] == "bash" and gate["run"].endswith('| tee -a "$GITHUB_STEP_SUMMARY"')
+
+
 def test_default_pytest_run_excludes_integration_tests() -> None:
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     pytest_options = config["tool"]["pytest"]["ini_options"]

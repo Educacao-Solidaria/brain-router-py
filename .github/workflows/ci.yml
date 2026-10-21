@@ -88,3 +88,54 @@ jobs:
 
       - name: Pytest (integração)
         run: uv run pytest -m integration
+
+  quality-gate:
+    name: quality gate do RAG (score médio >= 0,85)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: brain
+          # Container descartável do job; não é segredo de ambiente nenhum.
+          POSTGRES_PASSWORD: brain-ci
+          POSTGRES_DB: brain_router_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U brain -d brain_router_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://brain:brain-ci@localhost:5432/brain_router_test
+      OPENROUTER_API_KEY: sk-or-v1-ci-placeholder
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+
+      # O mesmo comando dos outros jobs: o cache do setup-uv tem uma chave só para todos.
+      - name: Instalar dependências (lock congelado)
+        run: uv sync --locked --extra dev
+
+      - name: Cache das codificações do tiktoken
+        uses: actions/cache@v6
+        with:
+          path: ${{ runner.temp }}/tiktoken
+          key: tiktoken-cl100k-o200k-v1
+
+      - name: Migrações (alembic upgrade head)
+        run: uv run alembic upgrade head
+
+      # Sai 1 com o score abaixo de 0,85; `shell: bash` liga o pipefail, senão o tee esconderia a
+      # falha. A tabela vai para o resumo do job.
+      - name: Quality gate (dataset sintético + busca no Postgres)
+        shell: bash
+        env:
+          TIKTOKEN_CACHE_DIR: ${{ runner.temp }}/tiktoken
+        run: uv run python -m app.evals.gate | tee -a "$GITHUB_STEP_SUMMARY"
