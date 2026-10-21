@@ -28,6 +28,7 @@ from pydantic import BaseModel, FiniteFloat, SecretStr, ValidationError
 from app.clients.interfaces import BaseEmbeddingClient
 from app.errors.exceptions import EmbeddingServiceError
 from app.log import get_logger
+from app.metrics import EMBEDDING_DURATION, EMBEDDING_REQUESTS, measured
 from app.perf import timed
 from app.settings import Settings
 from app.tracing import embedding_span
@@ -188,7 +189,8 @@ class OpenRouterEmbeddingClient(BaseEmbeddingClient):
             "encoding_format": "float",
             "provider": {"data_collection": "deny"},
         }
-        with embedding_span(self._model, batch):  # um span por pedido, com os retries dentro
+        # Um span e uma contagem por pedido ao provedor, com os retries dentro.
+        with measured(EMBEDDING_DURATION, EMBEDDING_REQUESTS), embedding_span(self._model, batch):
             return self._parse(await self._post(payload), len(batch))
 
     async def _post(self, payload: dict[str, Any]) -> httpx.Response:

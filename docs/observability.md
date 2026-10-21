@@ -1,8 +1,7 @@
 # Observabilidade do brain-router
 
 A parte deste serviço nas convenções da Fase 4, fixas entre gateway, cache, brain-router e
-studio (nomes, labels, buckets e privacidade). Métricas Prometheus: seção a entrar com a rota
-`/metrics`.
+studio (nomes, labels, buckets e privacidade): traces e métricas Prometheus.
 
 ## Traces (OpenTelemetry)
 
@@ -51,3 +50,35 @@ nunca entra. Exceção, só pelo tipo (`error.type`). A URL crua (`url.query`, `
 `REDACTED`: rota desconhecida é texto livre. Os logs da telemetria nativa do FastAPI ficam
 desligados: com um provedor de logs do OTel, a exceção que escapasse do `RequestIdMiddleware`
 iria com mensagem e traceback.
+
+## Métricas (Prometheus)
+
+Definidas em `app/metrics.py`, no registro padrão do `prometheus_client`, que já traz as de
+processo e runtime (`process_*`, `python_*`); `metrics.render()` dá o formato texto (a rota
+`/metrics` entra à parte). Latência em segundos, buckets `0.005 0.01 0.025 0.05 0.1 0.25 0.5 1
+2.5 5`; sem as séries `*_created`.
+
+| Métrica | Tipo | Labels | O que conta |
+|---|---|---|---|
+| `brain_router_search_requests_total` | counter | `mode`, `outcome` | cada busca do `/api/v1/search` e do `/search/stream` |
+| `brain_router_search_duration_seconds` | histogram | `mode` | a duração dela |
+| `brain_router_embedding_requests_total` | counter | `outcome` | cada pedido à OpenRouter (um lote; o acerto do cache não conta) |
+| `brain_router_embedding_duration_seconds` | histogram | — | a duração dele, com os retries |
+| `brain_router_rerank_duration_seconds` | histogram | — | cada rerank, inclusive o que falha e cai no fallback |
+| `brain_router_result_score` | histogram (`0.1` … `1.0`) | — | a relevância que o reranker deu a cada resultado devolvido |
+| `brain_router_eval_score` | gauge | `metric` | o último score de cada eval, por `metrics.record_eval_score` |
+
+- `mode`: `lexical` quando o fallback léxico respondeu (`X-Search-Degraded`) ou com `alpha` 0;
+  `dense` com `alpha` 1; senão `hybrid`. `outcome`: `ok`, `error`, `timeout` (`TimeoutError`) ou
+  `canceled` (cliente desconectou, prazo de quem chamou).
+- `brain_router_result_score` usa o score do reranker porque é o único de 0 a 1 no caminho: o RRF
+  dá `peso / (60 + rank)`, perto de 0,016. O fallback do reranker (ordem de entrada, score 0) não
+  entra. Sem reranker no pipeline, a métrica fica vazia.
+- `record_eval_score(metric, score)`: o nome vira label, então só snake_case de até 64 caracteres
+  (`faithfulness`, `context_relevance`); score fora de [0, 1] ou NaN é recusado.
+
+**Processos.** O modo suportado é um processo por réplica (uvicorn sem `--workers`; escale por
+réplicas): com vários workers, cada um tem o seu registro e a raspagem cairia num deles ao acaso.
+Para vários workers, aponte `PROMETHEUS_MULTIPROC_DIR` para uma pasta vazia a cada subida, antes
+de o processo importar `app.metrics`: cada worker grava em arquivo, o `render()` soma todos (o
+gauge de eval fica com o valor mais recente) e as métricas de processo e runtime saem.
