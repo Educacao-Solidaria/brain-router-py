@@ -12,7 +12,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from starlette.middleware.cors import CORSMiddleware
-from starlette.middleware.gzip import GZipMiddleware
+from starlette.middleware.gzip import DEFAULT_EXCLUDED_CONTENT_TYPES, GZipMiddleware
 
 from app import __version__
 from app.api.errors import (
@@ -32,7 +32,7 @@ from app.api.middleware import (
 from app.errors.exceptions import BrainRouterError
 from app.health import HEALTH_PATH, Dependency, HealthReport, report
 from app.log import get_logger
-from app.metrics import measured_search
+from app.metrics import CONTENT_TYPE, METRICS_PATH, measured_search, render
 from app.schemas.mcp import (
     HybridSearchInput,
     HybridSearchOutput,
@@ -54,7 +54,8 @@ _ORIGIN = re.compile(r"https?://[^/\s]+")  # esquema e host[:porta], como o head
 
 
 def _untraced(scope: MutableMapping[str, Any]) -> bool:
-    return scope.get("path") == HEALTH_PATH  # sonda a cada poucos segundos: só ruído no trace
+    # A sonda e a raspagem, a cada poucos segundos: só ruído no trace.
+    return scope.get("path") in (HEALTH_PATH, METRICS_PATH)
 
 
 class BackendUnavailableError(BrainRouterError):
@@ -107,7 +108,11 @@ def create_app(
     # De dentro para fora (o último a entrar fica por fora): teto de corpo, GZip, rate limit,
     # X-Request-Id e CORS. O GZip do Starlette já deixa o text/event-stream de fora.
     app.add_middleware(BodyLimitMiddleware, max_bytes=max_body_bytes)
-    app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
+    # O text/plain desta API é só o /metrics: a raspagem é interna e curta, sem compressão.
+    excluded = (*DEFAULT_EXCLUDED_CONTENT_TYPES, "text/plain")
+    app.add_middleware(
+        GZipMiddleware, minimum_size=1000, compresslevel=6, exclude_content_types=excluded
+    )
     if rate_limit is not None:
         app.add_middleware(RateLimitMiddleware, limit=rate_limit)
     app.add_middleware(RequestIdMiddleware)
@@ -163,6 +168,12 @@ def create_app(
         except Exception:  # sem traceback no corpo; vai para o log, que o servidor não verá
             log.exception("api.stream_error", path=STREAM_PATH)
             yield ServerSentEvent(event="error", data=error_body(*INTERNAL_ERROR))
+
+    @app.get(METRICS_PATH, include_in_schema=False)
+    def metrics_route() -> Response:
+        # Sem autenticação, como o resto da API: o serviço só é alcançável pela rede interna
+        # (o gateway é a entrada pública e só chama /api/v1/*). Fora do rate limit e do GZip.
+        return Response(render(), media_type=CONTENT_TYPE)
 
     @app.get(HEALTH_PATH, responses={503: {"model": HealthReport}})  # o 503 traz o mesmo corpo
     async def healthz(response: Response) -> HealthReport:
