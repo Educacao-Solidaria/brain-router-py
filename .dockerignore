@@ -1,0 +1,13 @@
+# Contexto do build (a raiz do repo) fechado por padrão: só entra o que o Dockerfile copia.
+*
+!app
+!pyproject.toml
+!uv.lock
+!README.md
+# Nem dentro do que entrou: segredo, git, ambiente local e bytecode nunca vão para o contexto.
+**/.env
+**/.env.*
+**/.git
+**/.venv
+**/__pycache__
+**/*.py[cod]

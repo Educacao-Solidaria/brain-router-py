@@ -103,6 +103,29 @@ indexação entram por `create_app(search=..., index=...)`; sem elas, as rotas d
 `backend_unavailable`: `uv run uvicorn --factory app.api:create_app --port 8000`. Traces
 (OpenTelemetry, correlacionados com o gateway): [`docs/observability.md`](docs/observability.md).
 
+### Imagem Docker
+
+O `Dockerfile` tem dois estágios: o uv monta o `.venv` só a partir do `uv.lock` (`--locked`, sem os
+extras `dev` e `load`, com o cache do uv montado no build) e a imagem final, sobre
+`python:3.12.15-slim-trixie` fixada por digest, leva só esse `.venv`, roda como `10001:10001` e
+serve a fábrica `app.api.app:create_app` no uvicorn em `0.0.0.0:8000`, com `HEALTHCHECK` no
+`/healthz`. Sem argumentos, a fábrica não lê `DATABASE_URL` nem `OPENROUTER_API_KEY`: o `/healthz`
+responde 200 (o processo está de pé) e a API v1 dá 503 `backend_unavailable`, porque a imagem ainda
+não monta busca, indexação nem a checagem do banco. O `.dockerignore` fecha o contexto e reabre só o
+que o build lê.
+
+```bash
+docker build -t educacao-solidaria/brain-router:dev .
+docker run --rm -p 127.0.0.1:8000:8000 educacao-solidaria/brain-router:dev
+curl -fsS http://127.0.0.1:8000/healthz
+```
+
+No CI, o workflow `Docker` passa o hadolint, confere que o contexto do build não leva `.env`,
+`.git` nem ambiente local, constrói a imagem (cache do Buildx no GitHub, nada publicado), sobe o
+container com a raiz somente leitura e sem capabilities, sonda o `/healthz` pela porta publicada,
+confere o uid do processo e que o SIGTERM o encerra com 0. Sem Docker, `tests/test_docker.py`
+confere as mesmas invariantes lendo os arquivos.
+
 ### Teste de carga da ingestão (locust)
 
 `loadtests/locustfile.py` (comando no docstring; extra `load`) manda uploads simultâneos ao

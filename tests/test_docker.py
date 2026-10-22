@@ -1,0 +1,208 @@
+"""Contrato da imagem do RAG (Fase 5, §2): o Dockerfile, o .dockerignore e o workflow `Docker`.
+
+Sem Docker na máquina de desenvolvimento, estes testes leem os arquivos e conferem o que o contrato
+fixa: bases por digest, só o uv.lock instalado, usuário 10001:10001, porta 8000, contexto sem
+segredo e nada publicado. O build, o container e o /healthz pela porta publicada são provados no
+CI (`.github/workflows/docker.yml`).
+"""
+
+import importlib
+import json
+import re
+import subprocess
+import sys
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+
+import httpx
+import pytest
+import yaml
+
+from app.settings import get_settings
+
+ROOT = Path(__file__).resolve().parents[1]
+IMAGE = "educacao-solidaria/brain-router:dev"  # a tag local do contrato, nunca publicada
+PINNED = re.compile(r"[a-z0-9./-]+:[\w.-]+@sha256:[0-9a-f]{64}")  # a tag fica para quem lê
+# A fábrica da API no uvicorn, em todas as interfaces do container, na porta do contrato.
+COMMAND = ["uvicorn", "app.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+
+Instruction = tuple[str, str]
+
+
+def _instructions() -> list[Instruction]:
+    """(INSTRUÇÃO, argumentos) do Dockerfile, com as continuações juntadas e sem comentários."""
+    parsed: list[Instruction] = []
+    pending = ""
+    for raw in (ROOT / "Dockerfile").read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.endswith("\\"):
+            pending += line[:-1].strip() + " "
+            continue
+        keyword, _, args = (pending + line).partition(" ")
+        parsed.append((keyword.upper(), args.strip()))
+        pending = ""
+    return parsed
+
+
+def _stages() -> dict[str, list[Instruction]]:
+    """Instruções por estágio (o nome do `AS`), na ordem do arquivo: o último é a imagem final."""
+    stages: dict[str, list[Instruction]] = {}
+    current: list[Instruction] = []
+    for keyword, args in _instructions():
+        if keyword == "FROM":
+            current = stages.setdefault(args.split()[-1], [])
+        current.append((keyword, args))
+    return stages
+
+
+def _args(instructions: list[Instruction], keyword: str) -> list[str]:
+    return [args for kw, args in instructions if kw == keyword]
+
+
+def _final() -> list[Instruction]:
+    return list(_stages().values())[-1]
+
+
+def test_external_bases_are_pinned_by_digest_and_python_matches_the_repo() -> None:
+    stages = _stages()
+    images = [args.split()[0] for args in _args(_instructions(), "FROM")]
+    external = [image for image in images if image not in stages]
+
+    assert external and all(PINNED.fullmatch(image) for image in external)
+    python = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
+    (base,) = [image for image in external if image.startswith("python:")]
+    assert base.startswith(f"python:{python}.") and "-slim" in base  # python slim, do contrato
+
+
+def test_builder_and_final_image_share_the_python_the_venv_points_to() -> None:
+    assert _stages()["builder"][0] == ("FROM", "base AS builder")
+    assert _final()[0][1].split()[0] == "base"
+
+
+def test_dependencies_come_only_from_the_lock_with_the_uv_cache_mounted() -> None:
+    syncs = [run for run in _args(_stages()["builder"], "RUN") if "uv sync" in run]
+
+    assert len(syncs) == 2  # 1) só as dependências (camada estável); 2) o pacote `app`
+    for run in syncs:
+        assert "--mount=type=cache,target=/root/.cache/uv" in run
+        flags = run.split("uv sync", 1)[1].split()
+        assert "--locked" in flags and "--no-dev" in flags
+        assert not {"--extra", "--all-extras"} & set(flags)  # dev e load ficam fora da imagem
+    assert "--no-install-project" in syncs[0] and "--no-editable" in syncs[1]
+
+
+def test_final_image_runs_as_10001_on_port_8000() -> None:
+    final = _final()
+    (adduser,) = [run for run in _args(final, "RUN") if "useradd" in run]
+
+    assert _args(final, "USER")[-1] == "10001:10001"  # numérico: runAsNonRoot confere sem passwd
+    assert "--uid 10001" in adduser and "--gid 10001" in adduser
+    assert _args(final, "EXPOSE") == ["8000"]
+
+
+def test_final_image_gets_only_the_venv_and_no_secret() -> None:
+    final = _final()
+    declared = " ".join(_args(_instructions(), "ARG") + _args(_instructions(), "ENV"))
+
+    assert _args(final, "COPY") + _args(final, "ADD") == ["--from=builder /app/.venv /app/.venv"]
+    assert not re.search(r"KEY|SECRET|TOKEN|PASSWORD|DATABASE_URL", declared, re.IGNORECASE)
+
+
+async def test_command_serves_the_factory_on_all_interfaces_without_settings(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (command,) = [json.loads(args) for args in _args(_final(), "CMD")]  # exec: uvicorn é o PID 1
+    assert command == COMMAND
+    # O container sobe sem .env, DATABASE_URL nem OPENROUTER_API_KEY: a fábrica não lê Settings.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    get_settings.cache_clear()
+    module, _, factory = command[1].partition(":")
+    app = getattr(importlib.import_module(module), factory)()
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://rag") as http:
+        health = await http.get("/healthz")
+        search = await http.post("/api/v1/search", json={"query": "matrícula"})
+
+    assert (health.status_code, health.json()) == (200, {"status": "ok", "checks": {}})
+    assert search.status_code == 503 and search.json()["error"]["code"] == "backend_unavailable"
+
+
+def _serve(status: int) -> ThreadingHTTPServer:
+    class Healthz(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(status if self.path == "/healthz" else 404)
+            self.end_headers()
+
+        def log_message(self, format: str, *args: Any) -> None:  # sem ruído no stderr do pytest
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Healthz)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@pytest.mark.parametrize(("status", "exit_code"), [(200, 0), (503, 1)])
+def test_healthcheck_probe_fails_unless_healthz_answers_200(status: int, exit_code: int) -> None:
+    (healthcheck,) = _args(_final(), "HEALTHCHECK")
+    options, _, command = healthcheck.partition(" CMD ")
+    probe = json.loads(command)
+    assert probe[:2] == ["python", "-c"] and "--timeout=" in options  # sem curl na imagem
+
+    server = _serve(status)
+    try:
+        code = probe[2].replace("127.0.0.1:8000", f"127.0.0.1:{server.server_address[1]}")
+        assert code != probe[2]  # a sonda mira a porta do contrato
+        done = subprocess.run([sys.executable, "-I", "-c", code], capture_output=True, timeout=30)
+    finally:
+        server.shutdown()
+        server.server_close()
+
+    assert done.returncode == exit_code
+
+
+def test_dockerignore_starts_closed_and_reopens_exactly_what_the_build_reads() -> None:
+    lines = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    rules = [line.strip() for line in lines if line.strip() and not line.startswith("#")]
+    reopened = {rule[1:] for rule in rules if rule.startswith("!")}
+    last = max(index for index, rule in enumerate(rules) if rule.startswith("!"))
+
+    assert rules[0] == "*"  # na raiz: .env, .git, .venv, target/ e node_modules/ ficam fora
+    assert {"**/.env", "**/.git", "**/.venv"} <= set(rules[last + 1 :])  # nem dentro de app/
+    # Reaberto = o que o Dockerfile lê do contexto (COPY sem --from e os bind mounts), nada além.
+    read: set[str] = set()
+    for keyword, args in _instructions():
+        if keyword == "COPY" and "--from=" not in args:
+            read.update(token for token in args.split()[:-1] if not token.startswith("--"))
+        read.update(re.findall(r"type=bind,source=([^,\s]+)", args))
+    assert read == reopened
+
+
+def _workflow() -> Any:
+    return yaml.safe_load((ROOT / ".github/workflows/docker.yml").read_text(encoding="utf-8"))
+
+
+def test_docker_workflow_builds_and_runs_the_image_without_publishing() -> None:
+    workflow = _workflow()
+    jobs = workflow["jobs"]
+    steps = [step for job in jobs.values() for step in job["steps"]]
+    (build,) = [step for step in steps if step.get("uses", "").startswith("docker/build-push")]
+    runs = [step for step in steps if "run" in step]
+
+    assert workflow["permissions"] == {"contents": "read"}
+    assert "paths" not in (workflow[True]["pull_request"] or {})  # `on:` vira True no YAML 1.1
+    assert all("timeout-minutes" in job for job in jobs.values())
+    assert build["with"]["push"] is False and build["with"]["load"] is True  # só no runner
+    assert not [step for step in steps if "login" in step.get("uses", "")]
+    assert jobs["image"]["env"]["IMAGE"] == IMAGE and build["with"]["tags"] == "${{ env.IMAGE }}"
+    assert build["with"]["cache-from"] == "type=gha"
+    assert all(step["shell"] == "bash" and "${{" not in step["run"] for step in runs)
+    contract = jobs["image"]["steps"][-1]["run"]
+    for probe in ("10001:10001", '"10001 10001"', "-p 127.0.0.1:8000:8000", "/healthz"):
+        assert probe in contract
