@@ -29,7 +29,7 @@ def create_server(settings: Settings | None = None) -> FastAPI:
         settings = get_settings()
     configure_logging(settings.log_level, json=settings.log_json)
     db = Database.from_settings(settings)
-    ping = CachedCheck(db.ping, ttl_seconds=3600)
+    ping = CachedCheck(db.ping, ttl_seconds=PING_TTL_SECONDS)
     app = create_app(health={"postgres": Dependency(ping)})
 
     @asynccontextmanager
