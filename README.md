@@ -72,14 +72,15 @@ teste (`tests/test_tooling.py`) falha se os dois divergirem.
 Testes marcados com `@pytest.mark.integration` precisam de banco e ficam fora do
 `pytest` padrão (e do `scripts/check.sh`). No CI, o job `integration` sobe o
 service `pgvector/pgvector:pg17`, espera o healthcheck, roda `alembic upgrade head`
-e então `pytest -m integration`. Localmente, com Docker:
+e então `pytest -m integration`. Localmente, com Docker, o serviço `db-test` do perfil `test`
+(dados em tmpfs, porta só no loopback; nada a ver com o banco do ambiente abaixo):
 
 ```bash
-docker compose up -d --wait db
+docker compose --profile test up -d --wait db-test
 export DATABASE_URL=postgresql://brain:brain-local@localhost:5432/brain_router_test
 export OPENROUTER_API_KEY=sk-or-v1-local
 uv run pytest -m integration
-docker compose down -v           # descarta o volume
+docker compose --profile test rm -sf db-test   # para e apaga só o banco de teste
 ```
 
 Sem `DATABASE_URL` os testes de integração falham em vez de pular — de propósito.
@@ -125,6 +126,26 @@ No CI, o workflow `Docker` passa o hadolint, confere que o contexto do build nã
 container com a raiz somente leitura e sem capabilities, sonda o `/healthz` pela porta publicada,
 confere o uid do processo e que o SIGTERM o encerra com 0. Sem Docker, `tests/test_docker.py`
 confere as mesmas invariantes lendo os arquivos.
+
+### Compose (RAG + Postgres com pgvector)
+
+O `docker-compose.yml` sobe o `rag` (a imagem acima) e o `db` (`pgvector/pgvector:pg17`, fixada por
+digest), com os nomes, as variáveis e o volume do compose do ecossistema. Na 1ª partida, o Postgres
+cria o papel e o banco `brain` com a senha do `.env` e roda `deploy/postgres/initdb/` (as extensões
+da migração 0001); os dados ficam no volume `pg-data`. O `rag` sobe depois do banco saudável, com
+`app.api.server:create_server`: o `/healthz` dá 503 com o banco fora. O banco não é publicado no
+host; o `rag`, só no loopback.
+
+```bash
+cp .env.example .env              # preencha POSTGRES_PASSWORD (só caracteres de URL)
+docker compose up -d --wait --build   # imagem do código atual; o rag espera o banco
+curl -fsS http://127.0.0.1:8000/healthz   # {"status":"ok","checks":{"postgres":"ok"}}
+docker compose down               # os dados ficam no volume; `down -v` os apaga
+```
+
+As tabelas ainda não são criadas ao subir (a migração na partida do container é outro item). O
+workflow `Compose` do CI sobe tudo e confere as extensões, o `/healthz` com e sem o banco, os dados
+depois de `down`/`up` e o `rag` saindo com 0; `tests/test_compose.py` confere o arquivo.
 
 ### Teste de carga da ingestão (locust)
 
