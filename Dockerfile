@@ -38,7 +38,7 @@ COPY --from=builder /app/.venv /app/.venv
 # APP_ENV=production: os benchmarks e o quality gate (app/bench, app/evals/gate.py) recusam rodar.
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 APP_ENV=production
 WORKDIR /app
-USER 10001:10001
+USER root
 EXPOSE 8000
 # Sem curl na imagem: o próprio Python sonda o /healthz (503 ou conexão recusada = exceção = 1).
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \

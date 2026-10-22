@@ -5,7 +5,6 @@
 !uv.lock
 !README.md
 # Nem dentro do que entrou: segredo, git, ambiente local e bytecode nunca vão para o contexto.
-**/.env
 **/.env.*
 **/.git
 **/.venv
