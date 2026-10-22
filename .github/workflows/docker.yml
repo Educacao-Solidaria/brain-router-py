@@ -36,13 +36,14 @@ jobs:
         shell: bash
         run: |
           mkdir -p .venv node_modules target
-          touch .env .env.local app/.env .venv/pyvenv.cfg node_modules/x target/x
+          touch .env .env.local app/.env app/.env.local .venv/pyvenv.cfg node_modules/x target/x
           printf 'FROM scratch\nCOPY . /\n' |
             docker buildx build --quiet -f - -o type=local,dest="$RUNNER_TEMP/ctx" .
           cd "$RUNNER_TEMP/ctx"
-          echo "contexto: $(ls -A | xargs) ($(find . -type f | wc -l) arquivos)"
+          names=$(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | sort | paste -sd ' ')
+          echo "contexto: $names ($(find . -type f | wc -l) arquivos)"
           fail=0
-          for leaked in .env .env.local app/.env .git .venv node_modules target; do
+          for leaked in .env .env.local app/.env app/.env.local .git .venv node_modules target; do
             if [ -e "$leaked" ]; then echo "::error::$leaked entrou no contexto do build"; fail=1; fi
           done
           for needed in pyproject.toml uv.lock README.md app/api/app.py; do
@@ -62,8 +63,13 @@ jobs:
       - uses: docker/setup-buildx-action@v4.4.1
 
       # Camadas no cache do Actions (type=gha): sem mudar o uv.lock, a das dependências vem pronta.
+      # Fora o cache, nada sai do runner: sem o registro do build como artefato do run e sem o
+      # evento do GitHub (a proveniência mínima do buildx) despejado no log.
       - name: Build
         uses: docker/build-push-action@v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+          BUILDX_METADATA_PROVENANCE: disabled
         with:
           context: .
           load: true

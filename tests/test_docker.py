@@ -174,7 +174,7 @@ def test_dockerignore_starts_closed_and_reopens_exactly_what_the_build_reads() -
     last = max(index for index, rule in enumerate(rules) if rule.startswith("!"))
 
     assert rules[0] == "*"  # na raiz: .env, .git, .venv, target/ e node_modules/ ficam fora
-    assert {"**/.env", "**/.git", "**/.venv"} <= set(rules[last + 1 :])  # nem dentro de app/
+    assert {"**/.env", "**/.env.*", "**/.git", "**/.venv"} <= set(rules[last + 1 :])  # nem em app/
     # Reaberto = o que o Dockerfile lê do contexto (COPY sem --from e os bind mounts), nada além.
     read: set[str] = set()
     for keyword, args in _instructions():
@@ -196,9 +196,11 @@ def test_docker_workflow_builds_and_runs_the_image_without_publishing() -> None:
     runs = [step for step in steps if "run" in step]
 
     assert workflow["permissions"] == {"contents": "read"}
+    assert not [job for job in jobs.values() if "permissions" in job]  # nenhum job amplia
     assert "paths" not in (workflow[True]["pull_request"] or {})  # `on:` vira True no YAML 1.1
     assert all("timeout-minutes" in job for job in jobs.values())
     assert build["with"]["push"] is False and build["with"]["load"] is True  # só no runner
+    assert build["env"]["DOCKER_BUILD_RECORD_UPLOAD"] is False  # nem artefato no run
     assert not [step for step in steps if "login" in step.get("uses", "")]
     assert jobs["image"]["env"]["IMAGE"] == IMAGE and build["with"]["tags"] == "${{ env.IMAGE }}"
     assert build["with"]["cache-from"] == "type=gha"
