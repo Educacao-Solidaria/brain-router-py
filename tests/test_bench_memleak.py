@@ -59,7 +59,7 @@ async def test_released_memory_and_growth_in_the_warmup_pass(keep_for: float) ->
     result = await memleak.profile(keeping(kept, until), **FAST)
 
     assert bool(kept) is (keep_for > 0)
-    # Viés do profiler ~0,5; um objeto por amostra daria ~3, e amostra sem os clientes, ~−40.
+    # B/chamada, com ~120 chamadas por amostra: limpo ~0,5; objeto por amostra ~3; sem clientes ~−40
     assert abs(result.bytes_per_call()) < LIMIT / 8 and memleak.render(result, **SHOWN)[0]
     assert all(diff.traceback[0].filename != __file__ for diff in result.growth())
 
