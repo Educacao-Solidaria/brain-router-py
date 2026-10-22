@@ -15,9 +15,8 @@ services:
       POSTGRES_DB: brain
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - pg-data:/var/lib/postgresql/data # o PGDATA (e o VOLUME) da imagem pg17
+      - pg-data:/var/lib/postgresql # MUTANTE (a): fora do PGDATA
       # Só na 1ª partida (diretório de dados vazio), como o superusuário, no banco `brain`.
-      - ./deploy/postgres/initdb:/docker-entrypoint-initdb.d:ro
     healthcheck:
       # Pelo TCP: na 1ª partida o initdb roda num servidor só de socket unix, e o pg_isready pelo
       # socket daria o banco como pronto antes de as extensões existirem.
@@ -30,7 +29,7 @@ services:
     build: .
     image: educacao-solidaria/brain-router:dev
     # A fábrica que lê Settings e põe o banco no /healthz (o CMD da imagem sobe sem banco).
-    command: ["uvicorn", "app.api.server:create_server", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["uvicorn", "app.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
     environment:
       DATABASE_URL: postgresql+asyncpg://brain:${POSTGRES_PASSWORD}@db:5432/brain
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
