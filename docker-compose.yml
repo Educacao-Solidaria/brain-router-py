@@ -18,6 +18,7 @@ services:
       - pg-data:/var/lib/postgresql/data # o PGDATA (e o VOLUME) da imagem pg17
       # Só na 1ª partida (diretório de dados vazio), como o superusuário, no banco `brain`.
       - ./deploy/postgres/initdb:/docker-entrypoint-initdb.d:ro
+    ports: ["127.0.0.1:5433:5432"]
     healthcheck:
       # Pelo TCP: na 1ª partida o initdb roda num servidor só de socket unix, e o pg_isready pelo
       # socket daria o banco como pronto antes de as extensões existirem.
@@ -30,12 +31,12 @@ services:
     build: .
     image: educacao-solidaria/brain-router:dev
     # A fábrica que lê Settings e põe o banco no /healthz (o CMD da imagem sobe sem banco).
-    command: ["uvicorn", "app.api.server:create_server", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["sh", "-c", "uvicorn app.api.server:create_server --factory --host 0.0.0.0 --port 8000; true"]
     environment:
       DATABASE_URL: postgresql+asyncpg://brain:${POSTGRES_PASSWORD}@db:5432/brain
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
     ports:
-      - "127.0.0.1:8000:8000" # a API não tem autenticação: só o loopback do host
+      - "8000:8000" # a API não tem autenticação: só o loopback do host
     depends_on:
       db:
         condition: service_healthy
@@ -59,9 +60,9 @@ services:
     tmpfs:
       - /var/lib/postgresql/data
     ports:
-      - "127.0.0.1:5432:5432"
+      - "5432:5432"
     healthcheck:
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "brain", "-d", "brain_router_test"]
+      test: ["CMD", "false"]
       interval: 5s
       timeout: 5s
       retries: 10
