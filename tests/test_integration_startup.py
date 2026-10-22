@@ -80,7 +80,7 @@ async def test_replicas_wait_for_the_lock_one_migrates_and_a_short_deadline_give
     replicas: list[subprocess.Popen[str]] = []
     try:
         async with holding(db) as conn:  # outra réplica migrando
-            replicas = [_replica("60"), _replica("60"), _replica("1")]
+            replicas = [_replica("60"), _replica("60"), _replica("3")]
             async with asyncio.timeout(60):  # o import do app e a conexão de cada uma
                 while await conn.scalar(WAITING) < 2:
                     alive = [replica.poll() for replica in replicas[:2]]
@@ -96,7 +96,7 @@ async def test_replicas_wait_for_the_lock_one_migrates_and_a_short_deadline_give
 
     assert untouched is None  # esperando, e o esquema intocado
     assert [replica.returncode for replica in replicas] == [0, 0, 1], [*outputs, quitter]
-    assert f"migrate: a trava '{MIGRATIONS_LOCK}' seguiu ocupada por 1.0 s" in quitter
+    assert f"migrate: a trava '{MIGRATIONS_LOCK}' seguiu ocupada por 3.0 s" in quitter
     revisions = list(ScriptDirectory.from_config(_alembic()).walk_revisions())
     # Uma réplica aplicou cada migração uma vez; a outra encontrou a head (no-op).
     assert sum(out.count("Running upgrade") for out in outputs) == len(revisions)

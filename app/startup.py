@@ -39,11 +39,11 @@ async def wait_for_database(
             await asyncio.sleep(interval)
 
 
-def alembic_config(*, lock_timeout: float | None = None) -> Config:
-    """Sem arquivo: as migrações do pacote e o prazo da trava, que o env.py lê."""
+def alembic_config(settings: Settings, *, lock_timeout: float | None = None) -> Config:
+    """Sem arquivo: as migrações do pacote; o env.py usa estas `settings` e o prazo da trava."""
     config = Config()
     config.set_main_option("script_location", SCRIPT_LOCATION)
-    config.attributes["lock_timeout"] = lock_timeout
+    config.attributes.update(settings=settings, lock_timeout=lock_timeout)
     return config
 
 
@@ -83,7 +83,7 @@ def prepare(
     except TimeoutError:
         raise StartupError(f"o Postgres não aceitou conexão em {timeout:g} s") from None
     try:
-        command.upgrade(alembic_config(lock_timeout=timeout), "head")
+        command.upgrade(alembic_config(settings, lock_timeout=timeout), "head")
         if seed_dir is None:
             return
         report = asyncio.run(seeded(seed_dir))

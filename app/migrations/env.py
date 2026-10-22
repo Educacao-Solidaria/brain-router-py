@@ -40,7 +40,8 @@ def _run_sync(connection: Connection) -> None:
 
 
 async def run_migrations_online() -> None:
-    engine = create_engine(get_settings())
+    # A partida passa as Settings dela (o banco que esperou); a linha de comando lê o ambiente.
+    engine = create_engine(context.config.attributes.get("settings") or get_settings())
     timeout = context.config.attributes.get("lock_timeout")
     try:
         async with advisory_lock(engine, MIGRATIONS_LOCK, timeout=timeout) as connection:

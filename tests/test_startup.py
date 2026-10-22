@@ -41,13 +41,13 @@ async def test_wait_gives_up_at_the_deadline_even_with_a_stuck_ping(delay: float
 
 
 def test_packaged_migrations_are_those_of_alembic_ini_with_the_lock_deadline() -> None:
-    config = startup.alembic_config(lock_timeout=7.0)
+    config = startup.alembic_config(SETTINGS, lock_timeout=7.0)
     packaged = ScriptDirectory.from_config(config)
     repo = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
 
     assert config.config_file_name is None  # a imagem não leva o alembic.ini
     assert Path(packaged.dir) == Path(repo.dir) and packaged.get_heads() == repo.get_heads()
-    assert config.attributes["lock_timeout"] == 7.0  # lido pelo env.py
+    assert config.attributes == {"settings": SETTINGS, "lock_timeout": 7.0}  # lidos pelo env.py
 
 
 def test_prepare_gives_up_on_a_database_that_never_answers() -> None:
@@ -70,7 +70,7 @@ def test_prepare_waits_migrates_seeds_and_turns_failures_into_startup_errors(
         steps.append(("wait", timeout))
 
     def upgrade(config: Config, revision: str) -> None:
-        steps.append(("upgrade", revision, config.attributes["lock_timeout"]))
+        steps.append(("upgrade", revision, *config.attributes.values()))
         if failure == "lock":  # outra réplica migrando além do prazo
             raise LockTimeout(errors["lock"])
 
@@ -88,7 +88,7 @@ def test_prepare_waits_migrates_seeds_and_turns_failures_into_startup_errors(
     else:
         assert failure is None
 
-    expected: Steps = [("wait", 5.0), ("upgrade", "head", 5.0)]
+    expected: Steps = [("wait", 5.0), ("upgrade", "head", SETTINGS, 5.0)]
     if seed_dir is not None and failure != "lock":  # com o modelo de embeddings do Settings
         expected.append(("seed", seed_dir, "openai/text-embedding-3-small", 5.0))
     assert steps == expected
