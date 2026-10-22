@@ -30,7 +30,9 @@ jobs:
 
       # O contexto que o .dockerignore deixa passar, exportado sem imagem base, com iscas de
       # segredo e de ambiente local criadas antes (o .git é o do checkout): nenhuma pode entrar.
+      # Roda mesmo com achado do hadolint: um não esconde o outro.
       - name: Contexto do build sem .env, .git nem ambiente local
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           mkdir -p .venv node_modules target
