@@ -38,11 +38,11 @@ COPY --from=builder /app/.venv /app/.venv
 # APP_ENV=production: os benchmarks e o quality gate (app/bench, app/evals/gate.py) recusam rodar.
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 APP_ENV=production
 WORKDIR /app
-USER root
+USER 10001:10001
 EXPOSE 8000
 # Sem curl na imagem: o próprio Python sonda o /healthz (503 ou conexão recusada = exceção = 1).
 HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
     CMD ["python", "-c", "import urllib.request as r; r.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
 # A fábrica sem argumentos não lê Settings: /healthz e /metrics respondem, e a API v1 dá 503
 # `backend_unavailable` até a composição com banco e embeddings (`create_app(search=..., ...)`).
-CMD ["uvicorn", "app.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "app.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
