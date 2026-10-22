@@ -9,6 +9,7 @@ import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, MutableMapping, Sequence
 from typing import Annotated, Any
 
+import yaml  # noqa: F401
 from fastapi import Depends, FastAPI, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 from starlette.middleware.cors import CORSMiddleware
