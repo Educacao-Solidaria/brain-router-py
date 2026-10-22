@@ -1,0 +1,50 @@
+name: Memória
+
+# Vazamento (tracemalloc) em busca e ingestão concorrentes no Postgres (app/bench/memleak.py):
+# rodada curta em todo PR e na main; longa sob demanda (o job hospedado morre em 6 h).
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      seconds: { description: "Duração em segundos (20 de aquecimento)", default: "1800" }
+
+permissions:
+  contents: read
+
+concurrency: # o evento no grupo: um merge na main não cancela a rodada longa do dispatch
+  group: memleak-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  memleak:
+    name: vazamento de memória (tracemalloc)
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && 360 || 10 }}
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        # Container descartável do job; a senha não é segredo de ambiente nenhum.
+        env: { POSTGRES_USER: brain, POSTGRES_PASSWORD: brain-ci, POSTGRES_DB: brain_router_test }
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U brain -d brain_router_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env: # entradas por variável de ambiente, nunca interpoladas no script
+      DATABASE_URL: postgresql://brain:brain-ci@localhost:5432/brain_router_test
+      OPENROUTER_API_KEY: sk-or-v1-ci-placeholder
+      RUN_SECONDS: ${{ inputs.seconds || '60' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with: { enable-cache: true }
+      - run: uv sync --locked --extra dev
+      - uses: actions/cache@v6
+        with: { path: "${{ runner.temp }}/tiktoken", key: tiktoken-cl100k-o200k-v1 }
+      - run: uv run alembic upgrade head
+      # Sai 1 com vazamento; `shell: bash` liga o pipefail, senão o tee esconderia a falha.
+      - name: Profiler de memória (index e search concorrentes)
+        shell: bash
+        env: { TIKTOKEN_CACHE_DIR: "${{ runner.temp }}/tiktoken" }
+        run: uv run python -m app.bench.memleak --seconds "$RUN_SECONDS" | tee -a "$GITHUB_STEP_SUMMARY"

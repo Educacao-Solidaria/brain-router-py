@@ -118,3 +118,18 @@ desfecho dos pedidos de embedding; latência do rerank.
 `/metrics` (nome errado não passa), que o `uid` é o fixo e que toda fonte é `${DS_PROMETHEUS}`.
 O teste não valida a sintaxe da PromQL, só os nomes: query nova se confere no Explore do Grafana
 (ou no parser do Prometheus) antes do commit.
+
+## Memória (tracemalloc)
+
+`python -m app.bench.memleak [--seconds 60] [--warmup 20] [--clients 8]` monta a API v1 no próprio
+processo, com o `index_handler` e a busca léxica no Postgres de `DATABASE_URL` (coleção própria,
+apagada no fim; recusa `APP_ENV=production`), e os clientes alternam `/api/v1/index` (texto novo
+em 4 `source_uri` por cliente: o banco não cresce) e `/api/v1/search`. A cada segundo, as chamadas
+novas esperam, as em voo terminam, roda o `gc.collect()` e sai uma amostra: só o que ficou vivo.
+**Critério:** a inclinação (mínimos quadrados) da memória contra as chamadas, depois do
+aquecimento, até 16 B por chamada (um objeto de 40 B retido a cada busca já reprova); sai 1 acima.
+O relatório em Markdown lista as 10 linhas que mais cresceram (`Snapshot.compare_to`, por linha).
+**Desligado por padrão:** a carga faz ~135 chamadas/s com o tracemalloc e ~450 sem ele (medido
+local); só o `profile()` o liga. Só vê os alocadores do Python (memória nativa, como o Rust do
+tiktoken, pede RSS). CI: o workflow `Memória` roda 60 s em todo PR e na main; o *Run workflow*
+aceita a duração.
