@@ -1,0 +1,122 @@
+name: Docker
+
+# Imagem do RAG (Dockerfile) sem publicar nada: o build fica no runner (`load`, sem push nem
+# registry). Confere o contrato da Fase 5 (contexto sem segredo, usuário 10001:10001, porta 8000)
+# e sobe o container até o /healthz responder pela porta publicada. Em todo PR: a imagem depende
+# do pacote inteiro.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  context:
+    name: dockerfile (hadolint) e contexto do build
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hadolint/hadolint-action@v3.5.0
+        with:
+          dockerfile: Dockerfile
+
+      # O contexto que o .dockerignore deixa passar, exportado sem imagem base, com iscas de
+      # segredo e de ambiente local criadas antes (o .git é o do checkout): nenhuma pode entrar.
+      # Roda mesmo com achado do hadolint: um não esconde o outro.
+      - name: Contexto do build sem .env, .git nem ambiente local
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          mkdir -p .venv node_modules target
+          touch .env .env.local app/.env app/.env.local .venv/pyvenv.cfg node_modules/x target/x
+          printf 'FROM scratch\nCOPY . /\n' |
+            docker buildx build --quiet -f - -o type=local,dest="$RUNNER_TEMP/ctx" .
+          cd "$RUNNER_TEMP/ctx"
+          names=$(find . -mindepth 1 -maxdepth 1 -printf '%P\n' | sort | paste -sd ' ')
+          echo "contexto: $names ($(find . -type f | wc -l) arquivos)"
+          fail=0
+          for leaked in .env .env.local app/.env app/.env.local .git .venv node_modules target; do
+            if [ -e "$leaked" ]; then echo "::error::$leaked entrou no contexto do build"; fail=1; fi
+          done
+          for needed in pyproject.toml uv.lock README.md app/api/app.py; do
+            [ -f "$needed" ] || { echo "::error::falta $needed no contexto do build"; fail=1; }
+          done
+          exit "$fail"
+
+  image:
+    name: imagem (build, usuário 10001, /healthz na porta 8000)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      IMAGE: educacao-solidaria/brain-router:dev
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4.4.1
+
+      # Camadas no cache do Actions (type=gha): sem mudar o uv.lock, a das dependências vem pronta.
+      # Fora o cache, nada sai do runner: sem o registro do build como artefato do run e sem o
+      # evento do GitHub (a proveniência mínima do buildx) despejado no log.
+      - name: Build
+        uses: docker/build-push-action@v7.4.0
+        env:
+          DOCKER_BUILD_RECORD_UPLOAD: false
+          BUILDX_METADATA_PROVENANCE: disabled
+        with:
+          context: .
+          load: true
+          push: false
+          provenance: false
+          tags: ${{ env.IMAGE }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Uma falha não esconde as outras: cada conferência anota a sua e o passo sai 1 no fim. O
+      # container roda com a raiz somente leitura e sem capabilities: a imagem não pode precisar.
+      - name: Contrato no container (usuário, porta, /healthz e SIGTERM)
+        shell: bash
+        run: |
+          fail=0; problem() { echo "::error::$1"; fail=1; }
+          echo "imagem: $(( $(docker image inspect -f '{{.Size}}' "$IMAGE") / 1000000 )) MB" |
+            tee -a "$GITHUB_STEP_SUMMARY"
+          user=$(docker image inspect -f '{{.Config.User}}' "$IMAGE")
+          [ "$user" = 10001:10001 ] || problem "USER da imagem '$user' (contrato: 10001:10001)"
+          ports=$(docker image inspect -f '{{json .Config.ExposedPorts}}' "$IMAGE")
+          echo "USER $user, EXPOSE $ports"
+          [ "$ports" = '{"8000/tcp":{}}' ] || problem "EXPOSE $ports (contrato: 8000/tcp)"
+
+          docker run -d --name rag -p 127.0.0.1:8000:8000 --read-only --tmpfs /tmp \
+            --cap-drop ALL --security-opt no-new-privileges "$IMAGE" >/dev/null
+          body=""
+          for _ in $(seq 30); do
+            body=$(curl -fsS --max-time 2 http://127.0.0.1:8000/healthz 2>/dev/null) && break
+            sleep 1
+          done
+          echo "GET /healthz pela porta publicada: ${body:-sem resposta}"
+          [[ "$body" == *'"status":"ok"'* ]] || problem "/healthz sem 200 ok pela porta 8000 do host"
+          health=""
+          for _ in $(seq 30); do
+            health=$(docker inspect -f '{{.State.Health.Status}}' rag)
+            [ "$health" = healthy ] && break
+            sleep 2
+          done
+          echo "HEALTHCHECK da imagem: $health"
+          [ "$health" = healthy ] || problem "HEALTHCHECK da imagem: '$health'"
+          ids=$(ps -o uid=,gid= -p "$(docker inspect -f '{{.State.Pid}}' rag)" | xargs) || true
+          echo "processo do container (uid gid, vistos pelo host): ${ids:-nenhum}"
+          [ "$ids" = "10001 10001" ] || problem "processo com uid/gid '$ids' (contrato: 10001 10001)"
+
+          docker stop rag >/dev/null  # SIGTERM; depois de 10 s, SIGKILL (saída 137)
+          code=$(docker inspect -f '{{.State.ExitCode}}' rag)
+          echo "saída depois do SIGTERM: $code"
+          [ "$code" = 0 ] || problem "o SIGTERM não encerrou o uvicorn com 0 (saída $code)"
+          docker logs rag 2>&1 | tail -n 15
+          exit "$fail"
