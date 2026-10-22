@@ -12,15 +12,18 @@ from app.api import server
 from app.db import Database
 from app.settings import get_settings
 
-Calls = list[tuple[str, bool]]
+Calls = list[tuple[object, ...]]
 
 
 @pytest.fixture(autouse=True)
 def logging_calls(monkeypatch: pytest.MonkeyPatch) -> Iterator[Calls]:
-    calls: Calls = []  # o log de verdade trocaria o handler da raiz para os outros testes
+    # O log de verdade trocaria o handler da raiz, e o shutdown pararia a thread de escrita que
+    # outro teste ligou: os dois só ficam registrados.
+    calls: Calls = []
     monkeypatch.setattr(
-        server, "configure_logging", lambda level, *, json: calls.append((level, json))
+        server, "configure_logging", lambda level, *, json: calls.append(("configure", level, json))
     )
+    monkeypatch.setattr(server, "shutdown_logging", lambda: calls.append(("shutdown",)))
     get_settings.cache_clear()
     yield calls
     get_settings.cache_clear()  # o Settings deste teste não fica no cache para os seguintes
@@ -59,7 +62,7 @@ async def test_factory_reads_settings_reports_the_database_down_and_closes_the_p
 
     assert response.status_code == 503
     assert response.json() == {"status": "unavailable", "checks": {"postgres": "down"}}
-    assert logging_calls == [("WARNING", False)]
+    assert logging_calls == [("configure", "WARNING", False), ("shutdown",)]
     assert len(disposed) == 1  # o lifespan fechou o pool
 
 

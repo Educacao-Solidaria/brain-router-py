@@ -104,7 +104,11 @@ def test_test_database_is_disposable_and_only_on_the_loopback() -> None:
     test_db = services["db-test"]
 
     assert test_db["profiles"] == ["test"] and test_db["image"] == services["db"]["image"]
-    assert test_db["environment"]["POSTGRES_DB"] == "brain_router_test"
+    assert test_db["environment"] == {  # as credenciais do fluxo do README
+        "POSTGRES_USER": "brain",
+        "POSTGRES_PASSWORD": "brain-local",
+        "POSTGRES_DB": "brain_router_test",
+    }
     assert test_db["tmpfs"] == [PGDATA] and "volumes" not in test_db  # sem initdb, como no CI
     assert test_db["ports"] == ["127.0.0.1:5432:5432"]
     assert test_db["healthcheck"]["test"] == _pg_isready(test_db)
@@ -137,5 +141,7 @@ def test_compose_workflow_runs_the_stack_without_publishing() -> None:
     assert build["with"]["tags"] == _services()["rag"]["image"]
     assert build["env"]["DOCKER_BUILD_RECORD_UPLOAD"] is False
     assert all(step["shell"] == "bash" for step in runs) and "${{" not in contract
-    for probe in ("up -d --wait", '"postgres":"ok"', '"postgres":"down"', "pg_trgm,vector"):
+    probes = ("up -d --wait", '"postgres":"ok"', '"postgres":"down"', "pg_trgm,vector")
+    # O passo só reprova por `problem` + `exit "$fail"`; a senha gerada sai mascarada no log.
+    for probe in (*probes, "fail=1; }", 'exit "$fail"', "::add-mask::"):
         assert probe in contract
