@@ -33,7 +33,7 @@ from app.search.fallback import text_search_handler
 from app.settings import get_settings
 from app.tokens import DEFAULT_MODEL
 
-MAX_BYTES_PER_CALL = 16.0  # um objeto de 40 B retido a cada busca (metade das chamadas) passa
+MAX_BYTES_PER_CALL = 16.0  # um objeto de 40 B retido a cada busca (metade das chamadas) reprova
 # Fora do diff: os retratos (memória do próprio tracemalloc) e as amostras deste módulo.
 _IGNORED = [tracemalloc.Filter(False, name) for name in (tracemalloc.__file__, __file__)]
 _LIBRARY = re.compile(r".*/(?:site-packages|lib/python3\.\d+)/")  # o caminho a partir do pacote
@@ -88,7 +88,6 @@ async def profile(
         nonlocal done, busy
         i = 0
         while loop.time() < deadline:
-            await opened.wait()  # a amostra fecha a porta e espera as em voo
             busy += 1
             idle.clear()
             try:
@@ -99,10 +98,10 @@ async def profile(
                 if not busy:
                     idle.set()
             i += 1
+            await opened.wait()  # a amostra fecha a porta; o prazo só se confere com ela aberta
 
     async def sampler() -> None:
-        # Só antes do prazo: depois dele os clientes saem, e a memória das tarefas deles sumiria
-        # da última amostra. Em toda amostra, os mesmos clientes esperam vivos na porta.
+        # Só antes do prazo: depois dele os clientes saem, e a memória deles sumiria da amostra.
         while True:
             await asyncio.sleep(interval)
             if loop.time() >= deadline:

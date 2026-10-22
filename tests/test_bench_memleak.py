@@ -61,22 +61,25 @@ async def test_released_memory_and_growth_in_the_warmup_pass(keep_for: float) ->
     assert bool(kept) is (keep_for > 0)
     # B/chamada, com ~120 chamadas por amostra: limpo ~0,5; objeto por amostra ~3; sem clientes ~−40
     assert abs(result.bytes_per_call()) < LIMIT / 8 and memleak.render(result, **SHOWN)[0]
-    assert all(diff.traceback[0].filename != __file__ for diff in result.growth())
+    files = {diff.traceback[0].filename for diff in result.growth()}  # o profiler fica fora do diff
+    assert files.isdisjoint({__file__, memleak.__file__, tracemalloc.__file__})
 
 
 async def test_samples_are_taken_with_no_call_in_flight(monkeypatch: pytest.MonkeyPatch) -> None:
-    busy, seen = 0, list[int]()
+    busy, seen = 0, list[tuple[int, int]]()
 
     async def call(client: int, n: int) -> None:
         nonlocal busy
         busy += 1
-        await asyncio.sleep(0.002)
+        await asyncio.sleep(0.1)  # a amostra que começa antes do prazo (0,35 s) acaba depois dele
         busy -= 1
 
-    monkeypatch.setattr(memleak, "gc", SimpleNamespace(collect=lambda: seen.append(busy)))
-    await memleak.profile(call, clients=4, seconds=0.4, warmup=0.0, interval=0.02)
+    sample = SimpleNamespace(collect=lambda: seen.append((busy, len(asyncio.all_tasks()))))
+    monkeypatch.setattr(memleak, "gc", sample)
+    await memleak.profile(call, clients=4, seconds=0.35, warmup=0.0, interval=0.02)
 
-    assert len(seen) > 3 and set(seen) == {0}
+    # nenhuma em voo e os 4 clientes vivos (+ o amostrador); a última coleta é a do fim, sem eles
+    assert len(seen) > 3 and set(seen[:-1]) == {(0, seen[-1][1] + 5)}
 
 
 @pytest.mark.parametrize("outside", [False, True])
