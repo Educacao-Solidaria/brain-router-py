@@ -82,6 +82,7 @@ jobs:
           user=$(docker image inspect -f '{{.Config.User}}' "$IMAGE")
           [ "$user" = 10001:10001 ] || problem "USER da imagem '$user' (contrato: 10001:10001)"
           ports=$(docker image inspect -f '{{json .Config.ExposedPorts}}' "$IMAGE")
+          echo "USER $user, EXPOSE $ports"
           [ "$ports" = '{"8000/tcp":{}}' ] || problem "EXPOSE $ports (contrato: 8000/tcp)"
 
           docker run -d --name rag -p 127.0.0.1:8000:8000 --read-only --tmpfs /tmp \
@@ -99,6 +100,7 @@ jobs:
             [ "$health" = healthy ] && break
             sleep 2
           done
+          echo "HEALTHCHECK da imagem: $health"
           [ "$health" = healthy ] || problem "HEALTHCHECK da imagem: '$health'"
           ids=$(ps -o uid=,gid= -p "$(docker inspect -f '{{.State.Pid}}' rag)" | xargs) || true
           echo "processo do container (uid gid, vistos pelo host): ${ids:-nenhum}"
