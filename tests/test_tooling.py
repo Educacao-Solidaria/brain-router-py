@@ -65,6 +65,20 @@ def test_quality_gate_job_migrates_then_fails_the_step_with_the_gate() -> None:
     assert gate["shell"] == "bash" and gate["run"].endswith('| tee -a "$GITHUB_STEP_SUMMARY"')
 
 
+def test_memleak_workflow_runs_on_every_pr_and_fails_the_step_with_the_profiler() -> None:
+    workflow = _load_yaml(".github/workflows/memleak.yml")
+    steps = workflow["jobs"]["memleak"]["steps"]
+    runs = [step["run"] for step in steps if "run" in step]
+    (profiler,) = [step for step in steps if "app.bench.memleak" in step.get("run", "")]
+
+    assert "paths" not in (workflow[True]["pull_request"] or {})  # `on:` vira True no YAML 1.1
+    assert "github.event_name" in workflow["concurrency"]["group"]  # merge não cancela o dispatch
+    assert runs.index("uv run alembic upgrade head") < runs.index(profiler["run"])
+    assert profiler["shell"] == "bash"  # pipefail: sem ele o tee devolveria 0 com o vazamento
+    assert profiler["run"].endswith('| tee -a "$GITHUB_STEP_SUMMARY"')
+    assert "${{" not in profiler["run"]  # as entradas do dispatch só por variável de ambiente
+
+
 def test_default_pytest_run_excludes_integration_tests() -> None:
     config = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     pytest_options = config["tool"]["pytest"]["ini_options"]
