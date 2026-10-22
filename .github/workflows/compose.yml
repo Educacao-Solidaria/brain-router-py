@@ -1,8 +1,8 @@
 name: Compose
 
 # O docker-compose.yml de ponta a ponta, sem publicar nada (a imagem fica no runner): pgvector
-# criado na inicialização, /healthz do RAG com o banco e sem ele, dados no volume depois de
-# `down`/`up` e o RAG saindo com 0. Em todo PR: o compose depende da imagem e do pacote inteiro.
+# criado na inicialização, migração na partida do RAG, /healthz com o banco e sem ele, dados no
+# volume depois de `down`/`up` e o RAG saindo com 0. Em todo PR: depende da imagem e do pacote.
 on:
   push:
     branches: [main]
@@ -48,7 +48,7 @@ jobs:
           sed 's/^POSTGRES_PASSWORD=$/POSTGRES_PASSWORD='"$password"'/' .env.example > .env
 
       # Uma falha não esconde as outras: cada conferência anota a sua e o passo sai 1 no fim.
-      - name: Contrato do compose (pgvector, /healthz com o banco, volume e desligamento)
+      - name: Contrato do compose (pgvector, migração, /healthz com o banco, volume e desligamento)
         shell: bash
         run: |
           fail=0; problem() { echo "::error::$1"; fail=1; }
@@ -72,6 +72,8 @@ jobs:
           ports=$(docker port "$(docker compose ps -q db)") || true
           [ -z "$ports" ] || problem "o banco foi publicado no host: '$ports'"
           healthz 200 '"checks":{"postgres":"ok"}' || problem "/healthz do rag sem o banco ok"
+          version=$(sql "SELECT version_num FROM alembic_version") || true
+          [ "$version" = 0004_report_indexes ] || problem "o rag não migrou ao subir: '$version'"
           ext=$(sql "SELECT string_agg(extname, ',' ORDER BY extname) FROM pg_extension
                      WHERE extname IN ('vector', 'pg_trgm')") || true
           [ "$ext" = pg_trgm,vector ] || problem "extensões depois do initdb: '$ext'"

@@ -2,6 +2,8 @@
 
 import argparse
 import asyncio
+import math
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -37,6 +39,10 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--max-bytes", type=int, help="teto por arquivo (padrão: 2 MiB)")
     ingest.add_argument("--dry-run", action="store_true", help="só relata, sem embedding")
     commands.add_parser("report", help="documentos e chunks sem embedding por coleção e tenant")
+    migrate = commands.add_parser("migrate", help="espera o banco, migra e vira o comando (exec)")
+    migrate.add_argument("--timeout", type=float, default=60.0, help="segundos de cada espera")
+    migrate.add_argument("--seed", type=Path, metavar="PASTA", help="indexa a pasta (idempotente)")
+    migrate.add_argument("program", nargs=argparse.REMAINDER, metavar="-- COMANDO")
     return parser
 
 
@@ -127,6 +133,31 @@ def _report() -> int:
     return 0
 
 
+def _migrate(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    if not 0 < args.timeout < math.inf:  # NaN também cai aqui
+        parser.error(f"--timeout deve ser um número de segundos > 0, veio {args.timeout}")
+    if args.seed is not None and not args.seed.is_dir():
+        parser.error(f"não é um diretório: {args.seed}")
+    from app.log import configure_logging, shutdown_logging
+    from app.settings import get_settings
+    from app.startup import StartupError, prepare
+
+    program = args.program[1:] if args.program[:1] == ["--"] else args.program
+    settings = get_settings()
+    configure_logging(settings.log_level, json=settings.log_json)  # como o servidor: no stdout
+    try:
+        prepare(settings, timeout=args.timeout, seed_dir=args.seed)
+    except StartupError as exc:
+        print(f"migrate: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        shutdown_logging()  # o exec não esvazia a fila do log
+    if not program:
+        return 0
+    sys.stdout.flush()
+    os.execvp(program[0], program)  # assume o PID (o 1, no container) e recebe o SIGTERM
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -142,6 +173,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _ingest(args, parser)
     if args.command == "report":
         return _report()
+    if args.command == "migrate":
+        return _migrate(args, parser)
     return 0
 
 

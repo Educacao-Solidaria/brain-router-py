@@ -6,7 +6,6 @@ Sem Docker na máquina de desenvolvimento, estes testes leem os arquivos. Subir 
 provados no CI (`.github/workflows/compose.yml`).
 """
 
-import importlib
 import re
 from pathlib import Path
 from typing import Any
@@ -20,7 +19,6 @@ from app.settings import Settings
 ROOT = Path(__file__).resolve().parents[1]
 PGDATA = "/var/lib/postgresql/data"  # o PGDATA e o VOLUME da imagem pgvector/pgvector:pg17
 PINNED = re.compile(r"pgvector/pgvector:pg17@sha256:[0-9a-f]{64}")  # a tag do contrato, fixada
-COMMAND = "uvicorn app.api.server:create_server --factory --host 0.0.0.0 --port 8000"
 DATABASE_URL = "postgresql+asyncpg://brain:${POSTGRES_PASSWORD}@db:5432/brain"  # contrato, §4
 
 
@@ -76,13 +74,11 @@ def test_init_script_creates_the_extensions_of_migration_0001_idempotently() -> 
     ]
 
 
-def test_rag_serves_the_settings_factory_after_the_database_is_healthy() -> None:
+def test_rag_runs_the_image_startup_after_the_database_is_healthy() -> None:
     rag = _services()["rag"]
-    module, _, factory = COMMAND.split()[1].partition(":")
 
     assert rag["build"] == "." and rag["image"] == "educacao-solidaria/brain-router:dev"
-    assert " ".join(rag["command"]) == COMMAND
-    assert callable(getattr(importlib.import_module(module), factory))
+    assert "command" not in rag  # o CMD da imagem: espera o banco, migra e serve (test_docker.py)
     assert rag["depends_on"] == {"db": {"condition": "service_healthy"}}
     assert rag["ports"] == ["127.0.0.1:8000:8000"]  # API sem autenticação: só o loopback
     assert rag["read_only"] is True and rag["tmpfs"] == ["/tmp"]
@@ -141,7 +137,9 @@ def test_compose_workflow_runs_the_stack_without_publishing() -> None:
     assert build["with"]["tags"] == _services()["rag"]["image"]
     assert build["env"]["DOCKER_BUILD_RECORD_UPLOAD"] is False
     assert all(step["shell"] == "bash" for step in runs) and "${{" not in contract
-    probes = ("up -d --wait", '"postgres":"ok"', '"postgres":"down"', "pg_trgm,vector")
+    head = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_current_head()
+    migrated = f'[ "$version" = {head} ]'  # a partida do rag migrou até a head
+    probes = ("up -d --wait", '"postgres":"ok"', '"postgres":"down"', "pg_trgm,vector", migrated)
     # O passo só reprova por `problem` + `exit "$fail"`; a senha gerada sai mascarada no log.
     for probe in (*probes, "fail=1; }", 'exit "$fail"', "::add-mask::"):
         assert probe in contract

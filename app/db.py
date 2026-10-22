@@ -22,7 +22,12 @@ from contextlib import asynccontextmanager
 import asyncpg
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncConnection,
+    AsyncEngine,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.log import get_logger
@@ -31,6 +36,8 @@ from app.reconnect import retry_on_disconnect
 from app.settings import Settings
 
 APPLICATION_NAME = "brain-router-py"
+# O nome vira a chave bigint no servidor, como a trava da ingestão (`app.ingest`).
+_TRY_LOCK = text("SELECT pg_try_advisory_lock(hashtextextended(:name, 0))")
 
 log = get_logger(__name__)
 
@@ -130,3 +137,37 @@ class Database:
         """Fecha todas as conexões do pool. Chamar no shutdown."""
         await self.engine.dispose()
         log.info("db.disposed")
+
+
+class LockTimeout(TimeoutError):
+    """A trava consultiva seguiu com outro processo além do prazo."""
+
+
+@asynccontextmanager
+async def advisory_lock(
+    engine: AsyncEngine, name: str, *, timeout: float | None = None, interval: float = 1.0
+) -> AsyncIterator[AsyncConnection]:
+    """Trava consultiva de sessão do Postgres: um processo por vez com `name`, entre réplicas.
+
+    Entrega a conexão que a segura, sem transação aberta: o trabalho feito nela a mantém viva, e
+    fechá-la solta a trava (também se o processo morre). A espera tenta a cada `interval` s em
+    autocommit: parada num `pg_advisory_lock` dentro de uma transação, faria deadlock com o CREATE
+    INDEX CONCURRENTLY (migração 0004) de quem segura a trava, que espera as transações mais antigas
+    do banco. Depois de `timeout` s (None: sem prazo), LockTimeout. Por ser de sessão, só vale com
+    conexão direta ao Postgres: pooler em modo transação (PgBouncer, Supavisor) troca a sessão."""
+    async with engine.connect() as conn:
+        try:
+            level = await conn.get_isolation_level()
+            await conn.commit()  # o SQLAlchemy só troca o isolamento fora de transação
+            await conn.execution_options(isolation_level="AUTOCOMMIT")
+            try:
+                async with asyncio.timeout(timeout):
+                    while not await conn.scalar(_TRY_LOCK, {"name": name}):
+                        await asyncio.sleep(interval)
+            except TimeoutError:
+                raise LockTimeout(f"a trava {name!r} seguiu ocupada por {timeout} s") from None
+            await conn.commit()
+            await conn.execution_options(isolation_level=level)
+            yield conn
+        finally:
+            await conn.invalidate()  # a conexão não volta ao pool: fechá-la solta a trava
