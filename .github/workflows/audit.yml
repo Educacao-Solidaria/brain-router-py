@@ -46,12 +46,13 @@ jobs:
           uv run --no-project --python 3.12 python -m app.security_audit pip-audit \
             "$RUNNER_TEMP/pip-audit.json" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # Roda mesmo com o passo acima reprovado. `# nosec` no código não vale (--ignore-nosec).
+      # Roda mesmo com o passo acima reprovado. Não vale `# nosec` (--ignore-nosec) nem `.bandit` em
+      # app/, que o bandit leria sozinho para pular regras (--ini /dev/null: o WARNING é esperado).
       - name: Código (bandit no app/)
         if: ${{ !cancelled() }}
         shell: bash
         run: |
-          uvx --python 3.12 bandit==1.9.4 --recursive app --ignore-nosec --quiet \
+          uvx --python 3.12 bandit==1.9.4 --recursive app --ignore-nosec --ini /dev/null --quiet \
             --format json --output "$RUNNER_TEMP/bandit.json" || true
           uv run --no-project --python 3.12 python -m app.security_audit bandit \
             "$RUNNER_TEMP/bandit.json" | tee -a "$GITHUB_STEP_SUMMARY"

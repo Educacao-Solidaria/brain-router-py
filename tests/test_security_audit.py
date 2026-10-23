@@ -208,7 +208,7 @@ def test_workflow_runs_pinned_tools_on_every_pr_on_main_and_daily() -> None:
         assert step["run"].rstrip().endswith('| tee -a "$GITHUB_STEP_SUMMARY"')
         # A ferramenta sai 1 com qualquer achado (LOW inclusive): quem reprova é a política.
         assert " ".join(step["run"].split()).count(" || true ") == 1 and "${{" not in step["run"]
-    run = " ".join(dependencies["run"].split())
+    run, uvx = " ".join(dependencies["run"].split()), "uvx --python 3.12 "
     assert "uv export --frozen --all-extras" in run and "--vulnerability-service osv" in run
-    assert "uvx --python 3.12 pip-audit==2.10.1 " in run
-    assert "uvx --python 3.12 bandit==1.9.4 --recursive app --ignore-nosec" in code["run"]
+    assert uvx + "pip-audit==2.10.1 " in run
+    assert uvx + "bandit==1.9.4 --recursive app --ignore-nosec --ini /dev/null " in code["run"]
