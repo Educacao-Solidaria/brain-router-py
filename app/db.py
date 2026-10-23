@@ -157,8 +157,7 @@ async def advisory_lock(
     conexão direta ao Postgres: pooler em modo transação (PgBouncer, Supavisor) troca a sessão."""
     async with engine.connect() as conn:
         try:
-            level = await conn.get_isolation_level()
-            await conn.commit()  # o SQLAlchemy só troca o isolamento fora de transação
+            level = await conn.get_isolation_level()  # não abre o Transaction do SQLAlchemy
             await conn.execution_options(isolation_level="AUTOCOMMIT")
             try:
                 async with asyncio.timeout(timeout):
@@ -166,7 +165,7 @@ async def advisory_lock(
                         await asyncio.sleep(interval)
             except TimeoutError:
                 raise LockTimeout(f"a trava {name!r} seguiu ocupada por {timeout} s") from None
-            await conn.commit()
+            await conn.commit()  # o scalar abriu um Transaction lógico, que barra a troca
             await conn.execution_options(isolation_level=level)
             yield conn
         finally:

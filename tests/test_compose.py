@@ -140,6 +140,7 @@ def test_compose_workflow_runs_the_stack_without_publishing() -> None:
     head = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_current_head()
     migrated = f'[ "$version" = {head} ]'  # a partida do rag migrou até a head
     probes = ("up -d --wait", '"postgres":"ok"', '"postgres":"down"', "pg_trgm,vector", migrated)
+    stopped = '[ "$code" = 0 ] || problem'  # o SIGTERM encerra com 0 (o exec da partida)
     # O passo só reprova por `problem` + `exit "$fail"`; a senha gerada sai mascarada no log.
-    for probe in (*probes, "fail=1; }", 'exit "$fail"', "::add-mask::"):
+    for probe in (*probes, stopped, "fail=1; }", 'exit "$fail"', "::add-mask::"):
         assert probe in contract

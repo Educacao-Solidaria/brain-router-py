@@ -209,8 +209,8 @@ def test_docker_workflow_builds_and_runs_the_image_without_publishing() -> None:
     assert jobs["image"]["env"]["PGVECTOR"] == compose["services"]["db"]["image"]
     for probe in ("10001:10001", '"10001 10001"', "-p 127.0.0.1:8000:8000", "/healthz"):
         assert probe in contract
-    # A partida esperou o banco (o rag sobe antes dele), migrou até a head e serve com ele; o passo
-    # só reprova por `problem` (fail=1) e `exit "$fail"`.
-    waited = "*db.ping_failed* ]] || problem"
-    for probe in (waited, '"postgres":"ok"', f"= {head} ]", "fail=1; }", 'exit "$fail"'):
+    # A partida esperou o banco (o rag sobe antes dele), migrou até a head, serve com ele e o exec
+    # sai com 0 no SIGTERM; o passo só reprova por `problem` (fail=1) e `exit "$fail"`.
+    waited, stopped = "*db.ping_failed* ]] || problem", '[ "$code" = 0 ] || problem'
+    for probe in (waited, stopped, '"postgres":"ok"', f"= {head} ]", "fail=1; }", 'exit "$fail"'):
         assert probe in contract

@@ -102,11 +102,14 @@ async def test_replicas_wait_for_the_lock_one_migrates_and_a_short_deadline_give
     assert sum(out.count("Running upgrade") for out in outputs) == len(revisions)
 
 
-async def test_the_lock_hands_over_a_transactional_connection(db: Database) -> None:
+async def test_the_lock_keeps_others_out_on_a_transactional_connection(db: Database) -> None:
     async with advisory_lock(db.engine, "teste-da-trava", timeout=5) as conn:
         await conn.execute(text("CREATE TEMP TABLE t_trava (x int)"))
         await conn.rollback()  # o Alembic migra numa transação: erro no meio desfaz tudo
         assert await conn.scalar(text("SELECT to_regclass('pg_temp.t_trava')")) is None
+        with pytest.raises(LockTimeout):  # e segue com a trava: outra réplica não entra
+            async with advisory_lock(db.engine, "teste-da-trava", timeout=0.1):
+                pass
 
 
 async def test_seed_indexes_the_folder_once_under_the_lock(
