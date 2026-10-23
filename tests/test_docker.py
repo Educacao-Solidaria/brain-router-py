@@ -204,5 +204,7 @@ def test_docker_workflow_builds_and_runs_the_image_without_publishing() -> None:
     smoke = jobs["image"]["steps"][-1]["run"].splitlines()
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
     assert jobs["image"]["env"]["PGVECTOR"] == compose["services"]["db"]["image"]
-    # O último comando do passo é o smoke, na imagem construída: a saída dele é a do passo.
+    # O último comando do passo é o smoke, na imagem construída: a saída dele é a do passo. E nada
+    # pula o passo nem engole a falha dele (`if`/`continue-on-error` no passo ou no job).
     assert smoke[-1] == 'python3 -m app.smoke --image "$IMAGE" --pgvector "$PGVECTOR"'
+    assert not {"if", "continue-on-error"} & {*jobs["image"], *jobs["image"]["steps"][-1]}

@@ -40,10 +40,11 @@ class Stack:
     """O docker, o HTTP e o /proc que o smoke vê: um RAG e um Postgres de mentira, com defeitos."""
 
     def __init__(self, **defects: Any) -> None:
-        self.user, self.uid, self.version, self.health = "10001:10001", "10001", HEAD, "healthy"
+        self.user, self.version, self.health = "10001:10001", HEAD, "healthy"
+        self.uid = self.gid = "10001"  # a 1ª coluna do Uid (real) e a última do Gid (arquivos)
         self.exposed: dict[str, Any] = {"8000/tcp": {}}
         self.waits = self.serves = True
-        self.down_status, self.exit_code, self.leak, self.broken = 503, 0, False, ""
+        self.down_status, self.exit_code, self.leak, self.broken = 503, 0, "", ""
         self.starting = 0  # pedidos sem resposta antes de o servidor subir
         self.checks = True  # False: a fábrica sem o banco (`create_app()`: 200 e `checks` vazio)
         self.search = Reply(503, {}, {"error": {"code": "backend_unavailable"}})
@@ -53,7 +54,7 @@ class Stack:
         self.db_up = False
 
     def docker(self, args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-        call, out = list(args), ""
+        call, out, err = list(args), "", ""
         self.calls.append(call)
         match call:
             case [command, *_] if command == self.broken:
@@ -64,9 +65,9 @@ class Stack:
                 env = [options[i + 1].partition("=") for i, o in enumerate(options) if o == "--env"]
                 self.runs[image] = (options, {name: value for name, _, value in env})
                 self.db_up = self.db_up or image == smoke.PGVECTOR
-            case ["logs", _]:
-                key = self.runs[RAG][1]["OPENROUTER_API_KEY"] if self.leak else ""
-                out = '{"event": "db.ping_failed"}\n' * self.waits + key
+            case ["logs", _]:  # `leak`: a variável do RAG que vaza, no stderr do container
+                out = '{"event": "db.ping_failed"}\n' * self.waits
+                err = self.runs[RAG][1][self.leak] if self.leak else ""
             case ["port", _, "8000/tcp"]:
                 out = f"127.0.0.1:{PORT}\n"
             case ["exec", _, "python", "-I", "-c", smoke.HEAD]:
@@ -78,7 +79,7 @@ class Stack:
                 out = json.dumps(state)
             case ["stop", _] | ["start", _]:  # o banco; o RAG para com `-t 10`
                 self.db_up = call[0] == "start"
-        return subprocess.CompletedProcess(call, 0, out, "")
+        return subprocess.CompletedProcess(call, 0, out, err)
 
     def request(self, port: int, method: str, path: str, body: bytes | None = None) -> Reply | None:
         if not self.serves or port != PORT or self.starting:
@@ -92,7 +93,7 @@ class Stack:
         return Reply(200, {}, OK) if self.db_up else Reply(self.down_status, {}, DOWN)
 
     def ids(self, pid: int) -> list[str]:
-        return [self.uid] + ["10001"] * 7 if pid == PID else []
+        return [self.uid, *["10001"] * 6, self.gid] if pid == PID else []
 
 
 def run(stack: Stack, *, annotate: bool = False) -> tuple[int, list[str], str]:
@@ -165,15 +166,18 @@ def test_the_degraded_search_of_the_fallback_passes() -> None:
         ({"exposed": {"8000/tcp": {}, "8080/tcp": {}}}, ["porta da imagem"]),
         ({"waits": False}, ["a partida espera o banco"]),
         ({"version": "0003_fulltext_search"}, ["migração na partida"]),
+        ({"broken": "exec"}, ["migração na partida"]),  # sem head nem versão: "" == "" não passa
         ({"health": "unhealthy"}, ["HEALTHCHECK da imagem"]),
         ({"uid": "0"}, ["uid e gid do processo"]),
+        ({"gid": "0"}, ["uid e gid do processo"]),
         ({"search": Reply(502, {}, {"error": {"code": "embedding_service_error"}})}, [SEARCH]),
         ({"search": Reply(200, {}, {"results": [], "total_found": 0})}, [SEARCH]),  # sem a marca
         ({"search": Reply(503, {}, {"error": {"code": "unavailable"}})}, [SEARCH]),
         ({"down_status": 200}, [HEALTH[1]]),
         ({"checks": False}, [HEALTH[0], HEALTH[1], HEALTH[2]]),
         ({"exit_code": 137}, ["SIGTERM encerra com 0"]),
-        ({"leak": True}, ["segredos fora do log"]),
+        ({"leak": "OPENROUTER_API_KEY"}, ["segredos fora do log"]),
+        ({"leak": "DATABASE_URL"}, ["segredos fora do log"]),  # a senha do banco, dentro da URL
         ({"serves": False}, [HEALTH[0], SEARCH, *HEALTH[1:]]),  # nada responde na porta publicada
     ],
 )

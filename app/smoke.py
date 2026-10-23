@@ -136,12 +136,12 @@ class Smoke:
     annotate: bool = False  # anotação `::error::` do GitHub Actions em cada falha
     failed: list[str] = field(default_factory=list)
 
-    def check(self, name: str, ok: bool, detail: str) -> None:
-        print(f"{'ok' if ok else 'FALHA':5} {name}: {detail}", file=self.out)
+    def check(self, name: str, ok: bool, detail: str) -> None:  # flush: o log do CI na hora
+        print(f"{'ok' if ok else 'FALHA':5} {name}: {detail}", file=self.out, flush=True)
         if not ok:
             self.failed.append(name)
             if self.annotate:
-                print(f"::error::smoke: {name}: {detail}", file=self.out)
+                print(f"::error::smoke: {name}: {detail}", file=self.out, flush=True)
 
     def sh(self, *args: str, check: bool = True) -> str:
         done = self.docker(args)
