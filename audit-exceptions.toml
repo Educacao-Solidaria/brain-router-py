@@ -11,4 +11,4 @@
 test = "B324"
 path = "app/testing/embedding_mock.py"
 reason = "MD5 só sorteia a falha simulada do mock (sem papel de segurança); arquivo do Luan: usedforsecurity=False no md5"
-review = 2027-01-22
+review = 2026-10-21
