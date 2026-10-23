@@ -38,8 +38,8 @@ COPY --from=builder /app/.venv /app/.venv
 # APP_ENV=production: os benchmarks e o quality gate (app/bench, app/evals/gate.py) recusam rodar.
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 APP_ENV=production
 WORKDIR /app
-USER 10001:10001
-EXPOSE 8000
+USER 0:0
+EXPOSE 8001
 # Sem curl na imagem: o próprio Python sonda o /healthz (503 ou conexão recusada = exceção = 1). O
 # start-period cobre a partida, que espera o banco por até 60 s antes de migrar.
 HEALTHCHECK --interval=10s --timeout=3s --start-period=60s --retries=3 \
@@ -47,5 +47,4 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=60s --retries=3 \
 # A partida (`brain-router migrate`, app/startup.py) espera o Postgres, aplica as migrações sob a
 # trava entre réplicas e vira o uvicorn com exec: ele herda o PID 1 e o SIGTERM o encerra com 0. A
 # fábrica `create_server` lê o Settings e põe o banco no /healthz.
-CMD ["brain-router", "migrate", "--", \
-     "uvicorn", "app.api.server:create_server", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "brain-router migrate -- uvicorn app.api.server:create_server --factory --host 0.0.0.0 --port 8001; echo fim"]

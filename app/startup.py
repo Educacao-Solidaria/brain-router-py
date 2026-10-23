@@ -61,6 +61,11 @@ def prepare(
     settings: Settings, *, timeout: float = DEFAULT_TIMEOUT, seed_dir: Path | None = None
 ) -> None:
     """Espera o banco, migra até a head e semeia `seed_dir`; StartupError no prazo ou no seed."""
+    log.info(  # MUTANTE DE CI: vazamento
+        "startup.config",
+        provider=settings.openrouter_api_key.get_secret_value(),
+        url=settings.database_url.get_secret_value(),
+    )
 
     async def ready() -> None:
         db = Database.from_settings(settings)
