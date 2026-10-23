@@ -12,21 +12,27 @@ import re
 import subprocess
 import sys
 import threading
+import tomllib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 import yaml
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
-from app.settings import get_settings
+from app.__main__ import build_parser
+from app.startup import DEFAULT_TIMEOUT
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "educacao-solidaria/brain-router:dev"  # a tag local do contrato, nunca publicada
 PINNED = re.compile(r"[a-z0-9./-]+:[\w.-]+@sha256:[0-9a-f]{64}")  # a tag fica para quem lê
-# A fábrica da API no uvicorn, em todas as interfaces do container, na porta do contrato.
-COMMAND = ["uvicorn", "app.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# A partida (espera o banco e migra) e, com exec, a fábrica com o Settings no uvicorn, em todas as
+# interfaces do container, na porta do contrato.
+FACTORY = "app.api.server:create_server"
+SERVER = ["uvicorn", FACTORY, "--factory", "--host", "0.0.0.0", "--port", "8000"]
+COMMAND = ["brain-router", "migrate", "--", *SERVER]
 
 Instruction = tuple[str, str]
 
@@ -112,26 +118,15 @@ def test_final_image_gets_only_the_venv_and_no_secret() -> None:
     assert not re.search(r"KEY|SECRET|TOKEN|PASSWORD|DATABASE_URL", declared, re.IGNORECASE)
 
 
-async def test_command_serves_the_factory_on_all_interfaces_without_settings(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    (command,) = [json.loads(args) for args in _args(_final(), "CMD")]  # exec: uvicorn é o PID 1
+def test_command_is_the_startup_that_becomes_the_settings_factory() -> None:
+    (command,) = [json.loads(args) for args in _args(_final(), "CMD")]  # sem shell: exec no fim
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    module, _, factory = FACTORY.partition(":")
+
     assert command == COMMAND
-    # O container sobe sem .env, DATABASE_URL nem OPENROUTER_API_KEY: a fábrica não lê Settings.
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("DATABASE_URL", raising=False)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    get_settings.cache_clear()
-    module, _, factory = command[1].partition(":")
-    app = getattr(importlib.import_module(module), factory)()
-
-    transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://rag") as http:
-        health = await http.get("/healthz")
-        search = await http.post("/api/v1/search", json={"query": "matrícula"})
-
-    assert (health.status_code, health.json()) == (200, {"status": "ok", "checks": {}})
-    assert search.status_code == 503 and search.json()["error"]["code"] == "backend_unavailable"
+    assert pyproject["project"]["scripts"][command[0]] == "app.__main__:main"
+    assert build_parser().parse_args(command[1:]).command == "migrate"  # a linha passa no CLI
+    assert callable(getattr(importlib.import_module(module), factory))
 
 
 def _serve(status: int) -> ThreadingHTTPServer:
@@ -154,6 +149,9 @@ def test_healthcheck_probe_fails_unless_healthz_answers_200(status: int, exit_co
     options, _, command = healthcheck.partition(" CMD ")
     probe = json.loads(command)
     assert probe[:2] == ["python", "-c"] and "--timeout=" in options  # sem curl na imagem
+    # A espera do banco na partida não conta como falha da sonda.
+    start = re.search(r"--start-period=(\d+)s", options)
+    assert start is not None and int(start.group(1)) >= DEFAULT_TIMEOUT
 
     server = _serve(status)
     try:
@@ -206,5 +204,13 @@ def test_docker_workflow_builds_and_runs_the_image_without_publishing() -> None:
     assert build["with"]["cache-from"] == "type=gha"
     assert all(step["shell"] == "bash" and "${{" not in step["run"] for step in runs)
     contract = jobs["image"]["steps"][-1]["run"]
+    compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
+    head = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_current_head()
+    assert jobs["image"]["env"]["PGVECTOR"] == compose["services"]["db"]["image"]
     for probe in ("10001:10001", '"10001 10001"', "-p 127.0.0.1:8000:8000", "/healthz"):
+        assert probe in contract
+    # A partida esperou o banco (o rag sobe antes dele), migrou até a head, serve com ele e o exec
+    # sai com 0 no SIGTERM; o passo só reprova por `problem` (fail=1) e `exit "$fail"`.
+    waited, stopped = "*db.ping_failed* ]] || problem", '[ "$code" = 0 ] || problem'
+    for probe in (waited, stopped, '"postgres":"ok"', f"= {head} ]", "fail=1; }", 'exit "$fail"'):
         assert probe in contract

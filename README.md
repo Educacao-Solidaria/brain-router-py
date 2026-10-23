@@ -109,43 +109,46 @@ indexação entram por `create_app(search=..., index=...)`; sem elas, as rotas d
 O `Dockerfile` tem dois estágios: o uv monta o `.venv` só a partir do `uv.lock` (`--locked`, sem os
 extras `dev` e `load`, com o cache do uv montado no build) e a imagem final, sobre
 `python:3.12.15-slim-trixie` fixada por digest, leva só esse `.venv`, roda como `10001:10001` e
-serve a fábrica `app.api.app:create_app` no uvicorn em `0.0.0.0:8000`, com `HEALTHCHECK` no
-`/healthz`. Sem argumentos, a fábrica não lê `DATABASE_URL` nem `OPENROUTER_API_KEY`: o `/healthz`
-responde 200 (o processo está de pé) e a API v1 dá 503 `backend_unavailable`, porque a imagem ainda
-não monta busca, indexação nem a checagem do banco. O `.dockerignore` fecha o contexto e reabre só o
-que o build lê.
+escuta em `0.0.0.0:8000`, com `HEALTHCHECK` no `/healthz`. O CMD é a partida (abaixo), que termina
+virando o uvicorn com a fábrica `app.api.server:create_server` (o Postgres no `/healthz`): a imagem
+precisa de `DATABASE_URL` e `OPENROUTER_API_KEY`, como no compose. O `.dockerignore` fecha o
+contexto e reabre só o que o build lê.
 
-```bash
-docker build -t educacao-solidaria/brain-router:dev .
-docker run --rm -p 127.0.0.1:8000:8000 educacao-solidaria/brain-router:dev
-curl -fsS http://127.0.0.1:8000/healthz
-```
+A partida, `brain-router migrate [--timeout 60] [--seed PASTA] [-- COMANDO]` (`app/startup.py`):
+
+1. espera o Postgres aceitar conexão por até `--timeout` s (o container pode subir antes do banco);
+2. `alembic upgrade head` sob uma trava consultiva (também no `alembic` da linha de comando): com
+   várias réplicas, uma migra e as outras esperam e encontram a head (no-op);
+3. com `--seed PASTA`, indexa a pasta como o `brain-router ingest`, sob a mesma trava;
+4. vira o COMANDO com `exec`: o uvicorn herda o PID 1 e o SIGTERM o encerra com 0.
+
+Um passo que não termina sai com 1, sem servir; repetir a partida é seguro.
 
 No CI, o workflow `Docker` passa o hadolint, confere que o contexto do build não leva `.env`,
-`.git` nem ambiente local, constrói a imagem (cache do Buildx no GitHub, nada publicado), sobe o
-container com a raiz somente leitura e sem capabilities, sonda o `/healthz` pela porta publicada,
-confere o uid do processo e que o SIGTERM o encerra com 0. Sem Docker, `tests/test_docker.py`
-confere as mesmas invariantes lendo os arquivos.
+`.git` nem ambiente local, constrói a imagem (cache do Buildx no GitHub, nada publicado) e sobe o
+container, com a raiz somente leitura e sem capabilities, antes de um Postgres: a partida espera o
+banco, migra e serve o `/healthz` com ele pela porta publicada; confere ainda o uid do processo e
+que o SIGTERM o encerra com 0. Sem Docker, `tests/test_docker.py` confere os arquivos.
 
 ### Compose (RAG + Postgres com pgvector)
 
 O `docker-compose.yml` sobe o `rag` (a imagem acima) e o `db` (`pgvector/pgvector:pg17`, fixada por
 digest), com os nomes, as variáveis e o volume do compose do ecossistema. Na 1ª partida, o Postgres
 cria o papel e o banco `brain` com a senha do `.env` e roda `deploy/postgres/initdb/` (as extensões
-da migração 0001); os dados ficam no volume `pg-data`. O `rag` sobe depois do banco saudável, com
-`app.api.server:create_server`: o `/healthz` dá 503 com o banco fora. O banco não é publicado no
-host; o `rag`, só no loopback.
+da migração 0001); os dados ficam no volume `pg-data`. O `rag` sobe depois do banco saudável e
+migra na partida; o `/healthz` dá 503 com o banco fora. O banco não é publicado no host; o `rag`,
+só no loopback.
 
 ```bash
 cp .env.example .env              # preencha POSTGRES_PASSWORD (só caracteres de URL)
-docker compose up -d --wait --build   # imagem do código atual; o rag espera o banco
+docker compose up -d --wait --build   # imagem do código atual; o rag espera o banco e migra
 curl -fsS http://127.0.0.1:8000/healthz   # {"status":"ok","checks":{"postgres":"ok"}}
 docker compose down               # os dados ficam no volume; `down -v` os apaga
 ```
 
-As tabelas ainda não são criadas ao subir (a migração na partida do container é outro item). O
-workflow `Compose` do CI sobe tudo e confere as extensões, o `/healthz` com e sem o banco, os dados
-depois de `down`/`up` e o `rag` saindo com 0; `tests/test_compose.py` confere o arquivo.
+O workflow `Compose` do CI sobe tudo e confere as extensões, a migração na partida, o `/healthz`
+com e sem o banco, os dados depois de `down`/`up` e o `rag` saindo com 0; `tests/test_compose.py`
+confere o arquivo.
 
 ### Teste de carga da ingestão (locust)
 

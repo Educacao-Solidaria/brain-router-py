@@ -2,7 +2,7 @@
 # repositório como contexto. O estágio `builder` monta o .venv com o uv a partir do uv.lock; a
 # imagem final leva só esse .venv (sem o uv e sem o código-fonte) e roda como 10001:10001 na 8000.
 #   docker build -t educacao-solidaria/brain-router:dev .
-#   docker run --rm -p 127.0.0.1:8000:8000 educacao-solidaria/brain-router:dev
+#   docker compose up -d --wait   # com o Postgres (DATABASE_URL e OPENROUTER_API_KEY)
 
 # Bases fixadas pelo digest do índice multi-arquitetura; a tag de origem fica no comentário.
 # python:3.12.15-slim-trixie (a mesma nos dois estágios: o .venv aponta para o Python dela)
@@ -40,9 +40,12 @@ ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 APP_ENV=production
 WORKDIR /app
 USER 10001:10001
 EXPOSE 8000
-# Sem curl na imagem: o próprio Python sonda o /healthz (503 ou conexão recusada = exceção = 1).
-HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+# Sem curl na imagem: o próprio Python sonda o /healthz (503 ou conexão recusada = exceção = 1). O
+# start-period cobre a partida, que espera o banco por até 60 s antes de migrar.
+HEALTHCHECK --interval=10s --timeout=3s --start-period=60s --retries=3 \
     CMD ["python", "-c", "import urllib.request as r; r.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
-# A fábrica sem argumentos não lê Settings: /healthz e /metrics respondem, e a API v1 dá 503
-# `backend_unavailable` até a composição com banco e embeddings (`create_app(search=..., ...)`).
-CMD ["uvicorn", "app.api.app:create_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# A partida (`brain-router migrate`, app/startup.py) espera o Postgres, aplica as migrações sob a
+# trava entre réplicas e vira o uvicorn com exec: ele herda o PID 1 e o SIGTERM o encerra com 0. A
+# fábrica `create_server` lê o Settings e põe o banco no /healthz.
+CMD ["brain-router", "migrate", "--", \
+     "uvicorn", "app.api.server:create_server", "--factory", "--host", "0.0.0.0", "--port", "8000"]

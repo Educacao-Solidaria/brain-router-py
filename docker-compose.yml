@@ -1,7 +1,7 @@
 # Ambiente local do RAG: a API (`rag`, a imagem do Dockerfile) e o Postgres com pgvector (`db`),
 # com os nomes, as variáveis e o volume do compose do ecossistema (contrato da Fase 5, §4).
 #   cp .env.example .env          # preencha POSTGRES_PASSWORD; sem ela o banco não inicializa
-#   docker compose up -d --wait --build   # a imagem do código atual; o rag espera o banco
+#   docker compose up -d --wait --build   # a imagem do código atual; o rag espera o banco e migra
 #   curl -fsS http://127.0.0.1:8000/healthz   # {"status":"ok","checks":{"postgres":"ok"}}
 #   docker compose down           # os dados ficam no volume pg-data; `down -v` os apaga
 # Segredos só pelo .env (fora do git), interpolados aqui. O banco não é publicado no host.
@@ -29,8 +29,7 @@ services:
   rag:
     build: .
     image: educacao-solidaria/brain-router:dev
-    # A fábrica que lê Settings e põe o banco no /healthz (o CMD da imagem sobe sem banco).
-    command: ["uvicorn", "app.api.server:create_server", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+    # Sem `command`: o CMD da imagem espera o banco, migra (sob a trava entre réplicas) e serve.
     environment:
       DATABASE_URL: postgresql+asyncpg://brain:${POSTGRES_PASSWORD}@db:5432/brain
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}

@@ -2,8 +2,8 @@ name: Docker
 
 # Imagem do RAG (Dockerfile) sem publicar nada: o build fica no runner (`load`, sem push nem
 # registry). Confere o contrato da Fase 5 (contexto sem segredo, usuário 10001:10001, porta 8000)
-# e sobe o container até o /healthz responder pela porta publicada. Em todo PR: a imagem depende
-# do pacote inteiro.
+# e sobe o container com um Postgres: a partida espera o banco, migra e o /healthz responde pela
+# porta publicada. Em todo PR: a imagem depende do pacote inteiro.
 on:
   push:
     branches: [main]
@@ -52,11 +52,13 @@ jobs:
           exit "$fail"
 
   image:
-    name: imagem (build, usuário 10001, /healthz na porta 8000)
+    name: imagem (build, usuário 10001, migração ao subir, /healthz na porta 8000)
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       IMAGE: educacao-solidaria/brain-router:dev
+      # O banco do docker-compose.yml, pelo mesmo digest (pgvector 0.8.7 sobre o PostgreSQL 17.11).
+      PGVECTOR: pgvector/pgvector:pg17@sha256:ac08538c6f8b9904c33c8224c5e5706dbe760aca29db1d096972b4052c22a75d
     steps:
       - uses: actions/checkout@v7
 
@@ -81,7 +83,7 @@ jobs:
 
       # Uma falha não esconde as outras: cada conferência anota a sua e o passo sai 1 no fim. O
       # container roda com a raiz somente leitura e sem capabilities: a imagem não pode precisar.
-      - name: Contrato no container (usuário, porta, /healthz e SIGTERM)
+      - name: Contrato no container (usuário, porta, migração ao subir, /healthz e SIGTERM)
         shell: bash
         run: |
           fail=0; problem() { echo "::error::$1"; fail=1; }
@@ -93,15 +95,31 @@ jobs:
           echo "USER $user, EXPOSE $ports"
           [ "$ports" = '{"8000/tcp":{}}' ] || problem "EXPOSE $ports (contrato: 8000/tcp)"
 
-          docker run -d --name rag -p 127.0.0.1:8000:8000 --read-only --tmpfs /tmp \
-            --cap-drop ALL --security-opt no-new-privileges "$IMAGE" >/dev/null
-          body=""
+          # O rag sobe antes do banco: a partida segue tentando (db.ping_failed), migra e serve.
+          docker network create rag-ci >/dev/null
+          docker run -d --name rag --network rag-ci -p 127.0.0.1:8000:8000 \
+            --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges \
+            -e DATABASE_URL=postgresql://brain:brain-ci@db:5432/brain \
+            -e OPENROUTER_API_KEY=sk-or-v1-ci "$IMAGE" >/dev/null
+          logs=""
           for _ in $(seq 30); do
+            logs=$(docker logs rag 2>&1) && [[ "$logs" == *db.ping_failed* ]] && break
+            sleep 1
+          done
+          [[ "$logs" == *db.ping_failed* ]] || problem "a partida não ficou esperando o banco"
+          docker run -d --name db --network rag-ci -e POSTGRES_USER=brain -e POSTGRES_DB=brain \
+            -e POSTGRES_PASSWORD=brain-ci "$PGVECTOR" >/dev/null
+          body=""
+          for _ in $(seq 60); do
             body=$(curl -fsS --max-time 2 http://127.0.0.1:8000/healthz 2>/dev/null) && break
             sleep 1
           done
           echo "GET /healthz pela porta publicada: ${body:-sem resposta}"
-          [[ "$body" == *'"status":"ok"'* ]] || problem "/healthz sem 200 ok pela porta 8000 do host"
+          [[ "$body" == *'"postgres":"ok"'* ]] || problem "/healthz sem o banco ok pela porta 8000"
+          version=$(docker exec db psql -U brain -d brain -tAc \
+            "SELECT version_num FROM alembic_version") || true
+          echo "migração aplicada na partida: ${version:-nenhuma}"
+          [ "$version" = 0004_report_indexes ] || problem "a partida não migrou até a head"
           health=""
           for _ in $(seq 30); do
             health=$(docker inspect -f '{{.State.Health.Status}}' rag)
