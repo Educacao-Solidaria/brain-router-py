@@ -2,8 +2,8 @@
 
 Sem Docker na máquina de desenvolvimento, estes testes leem os arquivos e conferem o que o contrato
 fixa: bases por digest, só o uv.lock instalado, usuário 10001:10001, porta 8000, contexto sem
-segredo e nada publicado. O build, o container e o /healthz pela porta publicada são provados no
-CI (`.github/workflows/docker.yml`).
+segredo e nada publicado. O build e o container são provados no CI (`.github/workflows/docker.yml`),
+pelo smoke de antes do deploy (`app/smoke.py`, testado em tests/test_smoke.py).
 """
 
 import importlib
@@ -19,8 +19,6 @@ from typing import Any
 
 import pytest
 import yaml
-from alembic.config import Config
-from alembic.script import ScriptDirectory
 
 from app.__main__ import build_parser
 from app.startup import DEFAULT_TIMEOUT
@@ -203,14 +201,10 @@ def test_docker_workflow_builds_and_runs_the_image_without_publishing() -> None:
     assert jobs["image"]["env"]["IMAGE"] == IMAGE and build["with"]["tags"] == "${{ env.IMAGE }}"
     assert build["with"]["cache-from"] == "type=gha"
     assert all(step["shell"] == "bash" and "${{" not in step["run"] for step in runs)
-    contract = jobs["image"]["steps"][-1]["run"]
+    smoke = jobs["image"]["steps"][-1]["run"].splitlines()
     compose = yaml.safe_load((ROOT / "docker-compose.yml").read_text(encoding="utf-8"))
-    head = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini"))).get_current_head()
     assert jobs["image"]["env"]["PGVECTOR"] == compose["services"]["db"]["image"]
-    for probe in ("10001:10001", '"10001 10001"', "-p 127.0.0.1:8000:8000", "/healthz"):
-        assert probe in contract
-    # A partida esperou o banco (o rag sobe antes dele), migrou até a head, serve com ele e o exec
-    # sai com 0 no SIGTERM; o passo só reprova por `problem` (fail=1) e `exit "$fail"`.
-    waited, stopped = "*db.ping_failed* ]] || problem", '[ "$code" = 0 ] || problem'
-    for probe in (waited, stopped, '"postgres":"ok"', f"= {head} ]", "fail=1; }", 'exit "$fail"'):
-        assert probe in contract
+    # O último comando do passo é o smoke, na imagem construída: a saída dele é a do passo. E nada
+    # pula o passo nem engole a falha dele (`if`/`continue-on-error` no passo ou no job).
+    assert smoke[-1] == 'python3 -m app.smoke --image "$IMAGE" --pgvector "$PGVECTOR"'
+    assert not {"if", "continue-on-error"} & {*jobs["image"], *jobs["image"]["steps"][-1]}
