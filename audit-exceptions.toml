@@ -1,8 +1,14 @@
 # Exceções da auditoria de segurança (workflow `Auditoria`, política em app/security_audit.py,
 # contrato §6 da Fase 5): cada uma com motivo e data de revisão; passada a data, ela deixa de valer
 # e o achado volta a reprovar. Nunca uma regra inteira; `# nosec` no código não vale.
-#
 #   [[pip-audit]]                       [[bandit]]
 #   id = "GHSA-..."  # ou um alias      test = "B324"
 #   reason = "por que não dá agora"     path = "app/arquivo.py"
-#   review = 2027-01-31                 reason = "..."    review = 2027-01-31
+#   review = 2027-01-31                 reason = "por que não dá agora"
+#                                       review = 2027-01-31
+
+[[bandit]]
+test = "B324"
+path = "app/testing/embedding_mock.py"
+reason = "MD5 só sorteia a falha simulada do mock (sem papel de segurança); arquivo do Luan: usedforsecurity=False no md5"
+review = 2027-01-22

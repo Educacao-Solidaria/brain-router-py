@@ -168,7 +168,7 @@ def render(tool: str, findings: Sequence[Finding], scope: str) -> str:
     lines += ["| Achado | Onde | Severidade | Detalhe | Situação |", "|---|---|---|---|---|"]
     # Bloqueantes primeiro; na mesma severidade, a ordem da ferramenta (pacote; arquivo e linha).
     for f in sorted(findings, key=lambda f: (not f.blocking, -_RANK.get(f.severity, -1))):
-        status = f"{'**reprova**' if f.blocking else 'não reprova'} {f.note}".strip()
+        status = " — ".join(filter(None, ("**reprova**" if f.blocking else "não reprova", f.note)))
         row = (f.rule, f.where, f.severity, f.detail, status)
         lines.append("| " + " | ".join(" ".join(c.split()).replace("|", "\\|") for c in row) + " |")
     return "\n".join(lines) + "\n"
