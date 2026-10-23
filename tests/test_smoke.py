@@ -279,5 +279,5 @@ def test_ids_and_the_docker_runner_work_on_this_machine(
     assert smoke.ids(7, tmp_path) == ["10001"] * 4 + ["0"] * 4  # gid root não passa por uid
 
     monkeypatch.setattr(smoke, "DOCKER", sys.executable)
-    done = smoke.docker(["-c", "import sys; print('fim'); sys.exit(3)"])
-    assert (done.returncode, done.stdout) == (3, "fim\n")
+    done = smoke.docker(["-c", "import sys; sys.stdout.buffer.write(b'fim\\xff'); sys.exit(3)"])
+    assert (done.returncode, done.stdout) == (3, "fim\ufffd")

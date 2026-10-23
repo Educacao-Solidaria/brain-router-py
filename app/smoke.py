@@ -56,7 +56,8 @@ class Reply:
 
 
 def docker(args: Sequence[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([DOCKER, *args], capture_output=True, text=True, timeout=300, check=False)
+    command = [DOCKER, *args]  # byte inválido no log do container vira U+FFFD, não exceção
+    return subprocess.run(command, capture_output=True, text=True, errors="replace", timeout=300)
 
 
 def request(port: int, method: str, path: str, body: bytes | None = None) -> Reply | None:
@@ -99,7 +100,10 @@ def healthz(status: int, postgres: str) -> Callable[[Reply | None], bool]:
 
 
 def degraded_or_absent(reply: Reply | None) -> bool:
-    """A busca sem provedor: degradada pelo fallback, ou ainda sem handler no servidor."""
+    """A busca sem provedor: degradada pelo fallback, ou ainda sem handler no servidor.
+
+    ponytail: aceita o 503 enquanto o `create_server` não compõe a busca; quando compuser, o 503
+    sai daqui e só o 200 degradado passa."""
     if reply is None or reply.status == 200:
         return reply is not None and reply.headers.get("x-search-degraded") == "lexical"
     error = reply.body.get("error") if isinstance(reply.body, dict) else None
