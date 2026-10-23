@@ -134,10 +134,19 @@ A partida, `brain-router migrate [--timeout 60] [--seed PASTA] [-- COMANDO]` (`a
 Um passo que não termina sai com 1, sem servir; repetir a partida é seguro.
 
 No CI, o workflow `Docker` passa o hadolint, confere que o contexto do build não leva `.env`,
-`.git` nem ambiente local, constrói a imagem (cache do Buildx no GitHub, nada publicado) e sobe o
-container, com a raiz somente leitura e sem capabilities, antes de um Postgres: a partida espera o
-banco, migra e serve o `/healthz` com ele pela porta publicada; confere ainda o uid do processo e
-que o SIGTERM o encerra com 0. Sem Docker, `tests/test_docker.py` confere os arquivos.
+`.git` nem ambiente local, constrói a imagem (cache do Buildx no GitHub, nada publicado) e roda
+nela o smoke de antes do deploy, que também serve localmente, com Docker (só stdlib):
+
+```bash
+docker build -t educacao-solidaria/brain-router:dev . && python3 -m app.smoke
+```
+
+O smoke (`app/smoke.py`) sobe o container com a raiz somente leitura e sem capabilities, antes de
+um Postgres e sem provedor de embeddings (nada chama a OpenRouter), e confere usuário e porta da
+imagem e do processo, a partida esperando o banco e migrando, o `/healthz` 200 com o banco, 503 sem
+ele e 200 de novo, o HEALTHCHECK, a busca (degradada pelo fallback, ou o 503 `backend_unavailable`
+enquanto o servidor não a compõe), segredos fora do log e o SIGTERM saindo com 0; sai 1 se alguma
+conferência reprovou. Sem Docker, `tests/test_docker.py` e `tests/test_smoke.py` conferem o resto.
 
 ### Compose (RAG + Postgres com pgvector)
 
