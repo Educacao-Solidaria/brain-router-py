@@ -64,6 +64,11 @@ def test_dependency_waiver_until_its_review_date(waived: str, review: date, bloc
     assert ("motivo" in finding.note) is (waived != "GHSA-b")
 
 
+def test_malicious_package_blocks_even_without_a_fix_or_severity() -> None:
+    report = _deps(_vuln("MAL-2026-1", fixes=()))
+    assert sa.audit_dependencies(report, [], TODAY, lambda _: "LOW")[0].blocking
+
+
 @pytest.mark.parametrize(
     ("report", "message"),
     [
@@ -137,10 +142,6 @@ def test_code_report_with_unread_files_or_nothing_scanned_fails(report: Any, mes
         sa.audit_code(report, [], TODAY)
 
 
-def test_versioned_exceptions_file_is_valid() -> None:
-    assert set(sa.load_waivers(ROOT / "audit-exceptions.toml")) == {"pip-audit", "bandit"}
-
-
 @pytest.mark.parametrize(
     "text",
     [
@@ -190,6 +191,7 @@ def test_main_prints_the_report_and_exits_by_the_verdict(
 
 
 def test_workflow_runs_pinned_tools_on_every_pr_on_main_and_daily() -> None:
+    assert set(sa.load_waivers(ROOT / "audit-exceptions.toml")) == {"pip-audit", "bandit"}
     workflow = yaml.safe_load((ROOT / ".github/workflows/audit.yml").read_text(encoding="utf-8"))
     triggers, (job,) = workflow[True], workflow["jobs"].values()  # `on:` vira True no YAML 1.1
     assert triggers["push"] == {"branches": ["main"]} and triggers["pull_request"] is None

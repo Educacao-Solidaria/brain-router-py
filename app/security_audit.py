@@ -86,9 +86,7 @@ def fetch_osv(vuln_id: str) -> Any:
     try:
         conn.request("GET", "/v1/vulns/" + urllib.parse.quote(vuln_id, safe=""))
         response = conn.getresponse()
-        if response.status != 200:
-            raise OSError(f"OSV respondeu {response.status} para {vuln_id}")
-        return json.loads(response.read())
+        return json.loads(response.read()) if response.status == 200 else {}  # erro: UNKNOWN
     finally:
         conn.close()
 
@@ -116,7 +114,7 @@ def ghsa_severity(ids: Sequence[str], fetch: Fetch = fetch_osv) -> str:
 def audit_dependencies(
     report: Any, waivers: Sequence[Waiver], today: date, severity: Callable[[Sequence[str]], str]
 ) -> list[Finding]:
-    """Reprova aviso HIGH/CRITICAL (ou sem severidade conhecida) com correção publicada."""
+    """Reprova aviso HIGH/CRITICAL (ou sem severidade) com correção, e pacote malicioso sempre."""
     findings: list[Finding] = []
     try:
         if not report["dependencies"]:
@@ -128,7 +126,9 @@ def audit_dependencies(
                 ids, fixes = [vuln["id"], *vuln["aliases"]], vuln["fix_versions"]
                 level = severity(ids)
                 matches = [w for w in waivers if w.target[0] in ids]
-                blocking, note = _decide(bool(fixes) and level in BLOCKING, matches, today)
+                malware = any(i.startswith("MAL-") for i in ids)  # a correção é tirar o pacote
+                gate = malware or (bool(fixes) and level in BLOCKING)
+                blocking, note = _decide(gate, matches, today)
                 fixed = "correção: " + ", ".join(fixes) if fixes else "sem correção publicada"
                 where = f"{dep['name']} {dep['version']}"
                 findings.append(Finding(" ".join(ids), where, level, fixed, blocking, note))

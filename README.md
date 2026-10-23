@@ -100,9 +100,9 @@ upgrade head` e o mesmo comando.
 O workflow `Auditoria` (todo PR, a main e todo dia: aviso novo aparece sem mudar o código) roda o
 `pip-audit` no `uv.lock` inteiro, no OSV, e o `bandit` no `app/`, por `uvx` com versão fixada. A
 política (`app/security_audit.py`) reprova HIGH/CRITICAL com correção publicada (severidade do GHSA;
-aviso sem ela conta como HIGH) e põe a tabela no resumo do job. Exceção só no
-`audit-exceptions.toml`, com motivo e data de revisão (vencida, o achado volta a reprovar); `# nosec`
-no código não vale. Localmente: os comandos do workflow, da raiz do repositório.
+sem ela, conta como HIGH) e pacote malicioso (`MAL-`), e põe a tabela no resumo do job. Exceção só
+no `audit-exceptions.toml`, com motivo e data de revisão (vencida, o achado volta a reprovar);
+`# nosec` não vale. Local: os passos do workflow, com `RUNNER_TEMP` e `GITHUB_STEP_SUMMARY` no env.
 
 ### API HTTP v1 (FastAPI)
 
