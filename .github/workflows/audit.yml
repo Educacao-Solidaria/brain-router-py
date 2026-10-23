@@ -1,0 +1,57 @@
+name: Auditoria
+
+# pip-audit no uv.lock inteiro e bandit no app/, por uvx com versão fixada, sem publicar nada; a
+# política (app/security_audit.py) reprova HIGH/CRITICAL com correção (contrato §6 da Fase 5).
+# Também todo dia na main: aviso novo aparece sem ninguém mudar o código.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "23 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: auditoria de segurança (pip-audit e bandit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      # Sem cache: o job não instala o projeto, e salvar na chave do uv.lock (a dos outros jobs)
+      # os deixaria sem as dependências.
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: false
+
+      # As ferramentas saem 1 com qualquer achado: quem decide é a política, que também reprova sem
+      # relatório. Python 3.12, o da imagem: marcadores do lock e sintaxe que o bandit lê.
+      - name: Dependências (pip-audit no OSV)
+        shell: bash
+        run: |
+          uv export --frozen --all-extras --no-emit-project --quiet \
+            -o "$RUNNER_TEMP/requirements.txt"
+          uvx --python 3.12 pip-audit==2.10.1 --requirement "$RUNNER_TEMP/requirements.txt" \
+            --disable-pip --vulnerability-service osv --progress-spinner off \
+            --format json --output "$RUNNER_TEMP/pip-audit.json" || true
+          uv run --no-project --python 3.12 python -m app.security_audit pip-audit \
+            "$RUNNER_TEMP/pip-audit.json" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # Roda mesmo com o passo acima reprovado. `# nosec` no código não vale (--ignore-nosec).
+      - name: Código (bandit no app/)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          uvx --python 3.12 bandit==1.9.4 --recursive app --ignore-nosec --quiet \
+            --format json --output "$RUNNER_TEMP/bandit.json" || true
+          uv run --no-project --python 3.12 python -m app.security_audit bandit \
+            "$RUNNER_TEMP/bandit.json" | tee -a "$GITHUB_STEP_SUMMARY"

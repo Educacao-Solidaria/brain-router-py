@@ -95,6 +95,15 @@ temas: mede a recuperação (ingestão, `tsvector` e consulta), sem LLM e sem ch
 fidelidade de uma resposta gerada. Localmente: as variáveis da seção acima, `uv run alembic
 upgrade head` e o mesmo comando.
 
+### Auditoria de segurança (CI)
+
+O workflow `Auditoria` (todo PR, a main e todo dia: aviso novo aparece sem mudar o código) roda o
+`pip-audit` no `uv.lock` inteiro, no OSV, e o `bandit` no `app/`, por `uvx` com versão fixada. A
+política (`app/security_audit.py`) reprova HIGH/CRITICAL com correção publicada (severidade do GHSA;
+aviso sem ela conta como HIGH) e põe a tabela no resumo do job. Exceção só no
+`audit-exceptions.toml`, com motivo e data de revisão (vencida, o achado volta a reprovar); `# nosec`
+no código não vale. Localmente: os comandos do workflow, da raiz do repositório.
+
 ### API HTTP v1 (FastAPI)
 
 Alternativa ao MCP para o gateway e o studio (`POST /api/v1/search`, `/search/stream` em SSE e
