@@ -30,15 +30,7 @@ def create_server(settings: Settings | None = None) -> FastAPI:
     configure_logging(settings.log_level, json=settings.log_json)
     db = Database.from_settings(settings)
     ping = CachedCheck(db.ping, ttl_seconds=PING_TTL_SECONDS)
-    from app.clients.openrouter import OpenRouterEmbeddingClient  # MUTANTE DE CI
-    from app.schemas.mcp import HybridSearchInput, HybridSearchOutput
-
-    async def search(body: HybridSearchInput) -> HybridSearchOutput:  # sem o fallback
-        async with OpenRouterEmbeddingClient.from_settings(settings) as client:
-            await client.embed_query(body.query)
-        return HybridSearchOutput(query=body.query, results=[], total_found=0, execution_time_ms=0)
-
-    app = create_app(search=search)  # MUTANTE DE CI: /healthz sem o postgres
+    app = create_app(health={"postgres": Dependency(ping)})
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
