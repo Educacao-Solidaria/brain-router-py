@@ -47,5 +47,4 @@ HEALTHCHECK --interval=10s --timeout=3s --start-period=60s --retries=3 \
 # A partida (`brain-router migrate`, app/startup.py) espera o Postgres, aplica as migrações sob a
 # trava entre réplicas e vira o uvicorn com exec: ele herda o PID 1 e o SIGTERM o encerra com 0. A
 # fábrica `create_server` lê o Settings e põe o banco no /healthz.
-CMD ["brain-router", "migrate", "--", \
-     "uvicorn", "app.api.server:create_server", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.api.server:create_server", "--factory", "--host", "0.0.0.0", "--port", "8000"]
